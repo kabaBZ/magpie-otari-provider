@@ -1,194 +1,324 @@
-# Magpie Otari Provider
+<p align="center">
+  <img src="https://otari.ai/apple-touch-icon-v2.png" alt="Otari" width="88" height="88">
+</p>
 
-给 [Magpie](https://usemagpie.ai/) 用的 Otari 供应商插件。它把 Otari 的模型、价格、用量、余额和 Chat Completions 接到 Magpie 里。
+<h1 align="center">Magpie × Otari Provider</h1>
 
-模型引用格式：
+<p align="center">
+  A Magpie provider plugin for the <a href="https://otari.ai">Otari</a> AI gateway.<br>
+  Model discovery, pricing, balance, usage, routing visibility and Chat Completions through one provider.
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square">
+  <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D20-339933.svg?style=flat-square">
+  <img alt="Magpie" src="https://img.shields.io/badge/Magpie-plugin-111827.svg?style=flat-square">
+  <img alt="Otari" src="https://img.shields.io/badge/Otari-provider-0f766e.svg?style=flat-square">
+</p>
+
+## Overview
+
+This package exposes Otari as a first-class Magpie provider. It is implemented as an OpenCode v1 provider plugin and runs in Magpie's Bun plugin host.
+
+Models are addressed as:
 
 ```text
-otari/<Otari 模型 ID>
+otari/<Otari model id>
 ```
 
-例如：
+Because Otari model IDs may contain slashes, the first slash separates the provider from the model:
 
 ```text
 otari/deepseek/deepseek-v4.1-flash
 ```
 
-Otari 的模型 ID 本身可以带斜杠。Magpie 按第一个斜杠分隔供应商和模型，后面的斜杠属于模型 ID。
+## Features
 
-## 功能
+- Dynamic Chat model discovery from `GET /models`.
+- Per-million-token price mapping from Otari into Magpie's model cost fields.
+- `GET /pricing/current` fallback when a model listing omits pricing.
+- Dashboard balance, key budget, reset time, usage and routing visibility.
+- OpenAI-compatible Chat Completions with streaming and non-streaming responses.
+- Browser-free account session exchange via `POST /api/v1/auth/session`.
+- Global and EU endpoint support.
+- No runtime npm dependencies.
 
-- 从 `GET /models` 动态读取当前 API Key 可用的 Chat 模型。
-- 把 Otari 的每百万 Token 价格映射到 Magpie 的模型价格。
-- 模型缺少价格时，回退到 `GET /pricing/current` 合并。
-- 通过 `POST /chat/completions` 调用模型，支持流式和非流式响应。
-- 当前登录只开放托管全球站；EU 和自托管登录暂时隐藏。
-- 插件图标直接使用 Otari 官网的 `apple-touch-icon-v2.png`。
-- 账号余额读取 `GET /wallet`。
-- Key 预算和刷新时间读取 `GET /organizations/me/spend-ceilings`。
-- 配置路由读取 `GET /organizations/me/routing-policies`。
+## How it works
 
-## 重要：供应商 ID 冲突
-
-Magpie 里如果已经有一个手建的 `otari` 供应商，插件不能再用 `otari` 这个 ID。Magpie 会把插件自动改名成 `otari-plugin`，并可能把它放到隐藏状态。
-
-有两种处理方式：
-
-1. 在 Magpie 里删除旧的 `otari` 手建供应商，插件继续使用 `otari`。
-2. 给插件设置一个不冲突的 ID，例如 `otari-provider`：
-
-```bash
-magpie plugin options otari-provider '{"providerID":"otari-provider"}'
+```mermaid
+flowchart TD
+  A[Choose region] --> B[Enter Otari API Key]
+  B --> C{Choose Dashboard login}
+  C -->|Session cookie| D[Paste otari_dashboard_session]
+  C -->|Email and password| E[POST /api/v1/auth/session]
+  C -->|Skip| F[API key only]
+  E --> D
+  D --> G[Account balance, key budget, reset time, usage, routes]
+  B --> H[Models, pricing and Chat Completions]
 ```
 
-设置后模型前缀是：
+The API key is always used for inference. The Dashboard session is only used for account-level reads.
 
-```text
-otari-provider/deepseek/deepseek-v4.1-flash
-```
+## Requirements
 
-## 安装
+- Magpie with plugin support.
+- An Otari API key beginning with `otk_`.
+- Optional: an Otari Dashboard session for balance, budget, reset time, usage and routing data.
+- Node.js 20+ for local tests.
 
-在本目录运行：
+## Installation
+
+From this directory:
 
 ```bash
 magpie plugin add .
 ```
 
-如果要用独立供应商 ID，先设置插件选项，再重新登录：
+Then sign in from the Magpie plugin page or the terminal:
+
+```bash
+magpie plugin login otari
+```
+
+### Full login
+
+The full login flow is intentionally ordered:
+
+| Step | Field | Required | Notes |
+| --- | --- | --- | --- |
+| 1 | Region | Yes | Global or EU |
+| 2 | Otari API Key | Yes | Validated against `/models` |
+| 3 | Dashboard login | Yes | Cookie, account/password, or skip |
+| 4 | Session/account fields | Depends | Shown only for the selected mode |
+
+#### Dashboard session cookie
+
+Paste the value of `otari_dashboard_session`:
+
+```text
+Otari Dashboard session（必填；不填无法获取账号余额、Key 预算、刷新时间和路由策略）
+```
+
+Only the cookie value is needed. Intercom and analytics cookies are not used.
+
+#### Email and password
+
+The plugin calls:
+
+```text
+POST /api/v1/auth/session
+```
+
+and captures the returned `otari_dashboard_session` from `Set-Cookie`.
+
+Security behavior:
+
+- The password is used only for this login request.
+- The password is deleted from the sign-in inputs immediately after the request.
+- The password is never written to `plugin-auth.json`.
+- Only the Dashboard session, expiry, email and account metadata are retained.
+
+#### Skip
+
+Skip keeps only the API key. Models, pricing and Chat Completions work normally. Balance, key budget, reset time and routing are not available.
+
+### Supplement an existing account
+
+After an API-key-only login, the account row exposes a **重新登录** entry. Use:
+
+```text
+补充现有账号的 Dashboard 登录
+```
+
+This mode:
+
+- Reuses the API key already stored by Magpie.
+- Does not ask for the region again.
+- Does not ask for the API key again.
+- Only asks for a Dashboard session or email/password.
+- Updates the existing account instead of creating a second account.
+
+Supplement mode requires exactly one Otari account. With multiple accounts, use the full login flow to select the account explicitly.
+
+### Account management
+
+- API-key-only accounts remain usable for inference.
+- The account row shows the host's **重新登录** action so a Dashboard session can be added later.
+- The add-account action is labelled **添加另一个 Otari 账号**.
+- Adding another account does not overwrite the existing one.
+
+> [!NOTE]
+> Magpie controls the exact labels of account-row actions. The plugin can make the action appear and control what it does, but it cannot rename the host's **重新登录** button.
+
+## Provider behavior
+
+### Model discovery
+
+The plugin reads:
+
+```text
+GET /api/v1/models
+```
+
+Only Chat models are exposed. The mapping includes:
+
+- model ID and display name;
+- context window and maximum output tokens;
+- input/output modalities;
+- tool-call and reasoning capability flags;
+- per-million-token pricing.
+
+Model IDs with nested slashes are preserved.
+
+### Pricing
+
+Pricing is taken from the `pricing` object returned by `/models`. If pricing is absent, the plugin reads `/pricing/current` and joins by `model_key`.
+
+The following Magpie cost fields are populated:
+
+| Magpie field | Otari source |
+| --- | --- |
+| `cost.input` | `input_price_per_million` |
+| `cost.output` | `output_price_per_million` |
+| `cost.cache.read` | `cache_read_price_per_million` |
+| `cost.cache.write` | `cache_write_price_per_million` |
+
+Tiered prices that Magpie cannot represent are not invented; the first-offering base price is used.
+
+### Balance, usage and routing
+
+Dashboard-authenticated reads use these endpoints:
+
+| Endpoint | Data |
+| --- | --- |
+| `GET /wallet` | Account available balance |
+| `GET /organizations/me/keys` | Key matching by prefix/suffix |
+| `GET /organizations/me/budgets` | Budget definition |
+| `GET /organizations/me/spend-ceilings` | Key spend, budget and `period_end` reset time |
+| `GET /organizations/me/usage/summary` | 30-day usage |
+| `GET /organizations/me/routing-policies` | Configured routing policies |
+
+The displayed windows are:
+
+- **Key budget** — current spend / maximum budget, with reset time.
+- **Balance** — account available balance.
+- **Last 30 days** — cost, requests and tokens.
+- **Otari routes** — configured policies, or “no routing policies configured”.
+
+API-key-only accounts return `signIn: "kept"` with a clear “sign in again” hint. This keeps the account usable for model calls while exposing the host's supplement-login action.
+
+### Reasoning
+
+Otari currently exposes reasoning as a boolean capability through `supported_parameters`. It does not expose allowed effort levels such as `low`, `medium` or `high`.
+
+The plugin maps the boolean to Magpie's `capabilities.reasoning`. It does not invent reasoning variants.
+
+## Configuration
+
+### Provider ID
+
+The default provider ID is `otari`.
+
+If another provider already occupies that ID, configure a unique ID:
 
 ```bash
 magpie plugin options otari-provider '{"providerID":"otari-provider"}'
-magpie plugin login otari-provider
 ```
 
-在 Magpie 的插件页面登录也可以。登录是一条固定流程：
-
-### 1. Otari 接入区域
-
-- `全球 (api.otari.ai)`
-- `欧洲 (eu.api.otari.ai)`
-
-自托管和自定义 base URL 暂时隐藏。
-
-### 2. Otari API Key（必填）
-
-填写 Otari API Key，通常以 `otk_` 开头。插件会先用它验证 `/models`。
-
-### 3. Dashboard 登录方式（三选一）
-
-- **使用 Dashboard session cookie**
-  - 只问 `otari_dashboard_session` 的值
-  - 填写后才能读账号余额、Key 预算、刷新时间和路由
-- **使用邮箱/密码登录**
-  - 只问邮箱和密码
-  - 直接调用 `POST /api/v1/auth/session` 自动换 session
-  - 密码只用于本次登录，当场删除，不写入 `plugin-auth.json`
-- **跳过**
-  - 不读余额、预算、刷新时间和路由
-  - 仍然可以读取模型、价格和调用模型
-
-只用 API Key 登录后，账号行会提供“重新登录”入口，点进去可以补充
-Dashboard session 或账号登录；账号列表里的添加按钮是“添加另一个 Otari
-账号”，不会覆盖已有账号。
-
-补充登录时选择“补充现有账号的 Dashboard 登录”不会再次询问区域和 API
-Key：插件直接复用 Magpie 已保存的唯一 Otari API Key，只问 Dashboard
-session 或邮箱/密码。存在多个 Otari 账号时，请使用完整登录方式指定账号。
-
-拿到 session 后，插件会读取：
+Then use:
 
 ```text
-GET /wallet
-GET /organizations/me/keys
-GET /organizations/me/budgets
-GET /organizations/me/spend-ceilings
-GET /organizations/me/usage/summary
-GET /organizations/me/routing-policies
+otari-provider/<Otari model id>
 ```
 
-用 `key_prefix + key_suffix` 匹配当前 Key，再用 `scope_type=api_token, scope_id=<key.id>` 找到预算，显示 `current_spend / max_budget` 和 `period_end` 刷新时间。
+### Regions
 
-Dashboard session 是敏感凭据，会过期。不要把整段 Cookie 发给别人；插件只把它保存在 Magpie 的 `plugin-auth.json`。
+The login flow currently exposes:
 
-如果账号密码已经在聊天或其他地方暴露，请立即修改 Otari 账号密码，并重新登录生成新的 session。
+- Global: `https://api.otari.ai/api/v1`
+- EU: `https://eu.api.otari.ai/api/v1`
 
-自托管和自定义 base URL 登录入口暂时隐藏，底层兼容代码保留。
+Self-hosted and custom base URL login is temporarily hidden. The underlying URL normalization remains in the codebase.
 
-## 使用
+### Session lifetime
 
-登录后先看模型列表：
+The Dashboard session expiry is stored as `dashboardExpiresAt`. When it expires, balance, budget and routing disappear until a new session is provided. The API key remains valid for inference.
 
-```bash
-magpie plugin
-magpie provider test otari
-magpie quota
-```
-
-使用独立 ID 时：
-
-```bash
-magpie provider test otari-provider
-magpie quota otari-provider
-```
-
-## 价格口径
-
-- 优先使用 `/models` 返回的 `pricing`，这是当前调用者在 Otari 的实际价格。
-- `pricing` 缺失时才请求 `/pricing/current`，按 `model_key` 精确合并。
-- 价格字段按每百万 Token 的美元价格写入：输入、输出、缓存读、缓存写。
-- Otari 的分层价格不会伪造为 Magpie 不支持的结构；插件使用模型首选 offering 的基础价。
-
-## 余额口径
-
-账号余额：
-
-```text
-GET /api/v1/wallet -> available / balance / currency
-```
-
-`available` 是扣除运行中请求预留后的可用余额，优先显示它。它通过可选的 Dashboard session 读取。
-
-Key 预算和刷新时间：
-
-```text
-GET /api/v1/organizations/me/spend-ceilings
-GET /api/v1/organizations/me/budgets
-```
-
-当前 Key 的 `current_spend / max_budget` 来自 spend ceiling，`period_end` 就是刷新时间。
-
-没有 Dashboard session 时，插件不会把普通工作区 Key 的 401 当成登录失效，只会显示一条说明，不影响模型调用。
-
-## 本地测试
+## Testing
 
 ```bash
 npm run check
 npm test
 ```
 
-测试使用 Node 内置测试框架和 mock fetch，不会访问真实网络。
+The test suite uses Node's built-in test runner and mocked HTTP responses. It covers:
 
-### 真实联调
+- provider and Prompt structure;
+- model and pricing mapping;
+- API key, cookie and account login modes;
+- skipped Dashboard login;
+- retry after invalid credentials;
+- supplement-login reuse of an existing account;
+- usage, balance and routing window mapping.
+
+### Live smoke test
 
 ```powershell
 $env:OTARI_API_KEY = "otk_..."
-$env:OTARI_BASE_URL = "https://api.otari.ai/api/v1" # 可选
-$env:OTARI_DASHBOARD_SESSION = "otari_dashboard_session 的值" # 可选，读取 Key 预算/刷新时间
-$env:OTARI_SMOKE_MODEL = "deepseek/deepseek-v4.1-flash" # 可选
+$env:OTARI_BASE_URL = "https://api.otari.ai/api/v1"
+$env:OTARI_DASHBOARD_SESSION = "otari_dashboard_session value"
+$env:OTARI_SMOKE_MODEL = "deepseek/deepseek-v4.1-flash"
 npm run smoke
 ```
 
-`smoke` 会读取模型、价格、用量和预算，并发送一条很小的 Chat 请求。会产生真实调用和费用，只在明确需要时运行。
+`OTARI_DASHBOARD_SESSION` and `OTARI_SMOKE_MODEL` are optional. The smoke script makes a real Chat Completions request and may incur cost.
 
-## 安全
+## Troubleshooting
 
-- API Key 和 Dashboard session 由 Magpie 的 `plugin-auth.json` 保存，插件不会写入或打印它们。
-- Dashboard session 会过期；过期后余额、预算和路由会消失，重新登录时填新的 session 即可。
-- 插件不会打印请求体、响应体或密钥；错误日志只保留状态码和截断后的错误信息。
+### Price is missing
 
-## 兼容性
+Confirm the API key can read `/models`. If the model has no `pricing` block, the plugin tries `/pricing/current`.
 
-- 只列出 Otari `type` 为 `chat` 或未标注类型的模型。
-- 嵌入、图像、语音、重排等非 Chat 模型不会进入 Magpie 模型列表。
-- 插件不依赖第三方 npm 包，入口是纯 ESM，Magpie 的 Bun 宿主可直接加载。
+### Balance is missing
+
+Balance and key budget require a Dashboard session. An API key alone is not sufficient on the hosted Otari API.
+
+### Routing is empty
+
+`/organizations/me/routing-policies` returned an empty list for the current workspace. The plugin displays “no routing policies configured”.
+
+### A second account appears
+
+Use **补充现有账号的 Dashboard 登录** for an existing account. Do not use the add-account flow when the intent is to supplement an existing account.
+
+### The provider is hidden
+
+The `otari` provider ID may already be occupied. Remove the old provider or configure a unique `providerID`.
+
+## Security
+
+- API keys and Dashboard sessions are stored by Magpie in `plugin-auth.json`.
+- Passwords are never persisted by this plugin.
+- The plugin does not print keys, cookies or request bodies.
+- Dashboard sessions are sensitive and expire. Treat them like passwords.
+- Use HTTPS for hosted endpoints.
+
+If a session or password has been exposed, sign out of the Otari Dashboard, sign in again, and replace the stored session with the new value.
+
+## Development
+
+```text
+index.mjs          provider plugin hooks
+test/otari.test.mjs unit tests
+scripts/smoke.mjs  optional live smoke test
+```
+
+The plugin is plain ESM and has no runtime dependencies.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
