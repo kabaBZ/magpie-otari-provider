@@ -561,6 +561,8 @@ test("plugin config and loader expose the Otari provider", async () => {
   assert.equal(method.prompts[4].when.value, "account");
   assert.equal(method.prompts[5].when.value, "account");
   assert.match(method.prompts[3].message, /无法获取/);
+  assert.equal(method.prompts[4].placeholder, "请输入账号");
+  assert.equal(method.prompts[5].placeholder, "请输入密码");
   assert.match(method.prompts[5].message, /不保存/);
   assert.equal(hooks.auth.methods.length, 1);
   assert.equal(cfg.provider.otari.name, "Otari");
