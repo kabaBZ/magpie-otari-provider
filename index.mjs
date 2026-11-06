@@ -356,14 +356,20 @@ function mapModel(
   );
   const input = normalizeModalities(model.architecture?.input_modalities);
   const output = normalizeModalities(model.architecture?.output_modalities);
+  // Otari reports "organization" when the model is served by a provider key
+  // that belongs to the caller's organization (bring-your-own-key). That is
+  // the only signal the model listing gives us, and it is exactly the one a
+  // user needs to tell their own provider apart from a deployment-hosted one.
+  const organizationOwned = model.pricing_source === "organization";
+  const displayName =
+    typeof model.name === "string" && model.name.trim()
+      ? model.name.trim()
+      : model.id;
 
   const mapped = {
     id: model.id,
     providerID,
-    name:
-      typeof model.name === "string" && model.name.trim()
-        ? model.name.trim()
-        : model.id,
+    name: organizationOwned ? `[自有 Key] ${displayName}` : displayName,
     api: {
       id: model.id,
       url: normalizeBaseURL(baseURL),
@@ -387,6 +393,7 @@ function mapModel(
   if (temperature !== null) mapped.temperature = temperature;
   if (cost) mapped.cost = cost;
   if (price && isFreePricing(price)) mapped.free = true;
+  if (organizationOwned) mapped.organizationOwned = true;
   return mapped;
 }
 

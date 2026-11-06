@@ -39,6 +39,7 @@ otari/deepseek/deepseek-v4.1-flash
 ## Features
 
 - Dynamic Chat model discovery from `GET /models`.
+- Models served by your organization's own provider keys are marked `[自有 Key]` in the model picker.
 - Per-million-token price mapping from Otari into Magpie's model cost fields.
 - `GET /pricing/current` fallback when a model listing omits pricing.
 - Dashboard balance, key budget, reset time, usage and routing visibility.
@@ -185,6 +186,12 @@ Only Chat models are exposed. The mapping includes:
 - per-million-token pricing.
 
 Model IDs with nested slashes are preserved.
+
+Models whose `pricing_source` is `organization` are served by a provider key
+your organization added under **Organization → Providers**. The plugin prefixes
+those display names with `[自有 Key]` so they are distinguishable from models a
+deployment hosts. This is a display marker only; it does not change the model
+ID or the request.
 
 ### Pricing
 

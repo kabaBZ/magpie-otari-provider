@@ -121,6 +121,20 @@ test("maps Otari model metadata, pricing and capabilities", () => {
   assert.equal(mapped.temperature, true);
 });
 
+test("marks models served by the organization's own provider key", () => {
+  const own = _internal.mapModel(
+    modelFixture({ pricing_source: "organization" }),
+  );
+  assert.equal(own.organizationOwned, true);
+  assert.equal(own.name, "[自有 Key] DeepSeek V4.1 Flash");
+
+  const hosted = _internal.mapModel(
+    modelFixture({ pricing_source: "configured" }),
+  );
+  assert.equal(hosted.organizationOwned, undefined);
+  assert.equal(hosted.name, "DeepSeek V4.1 Flash");
+});
+
 test("does not invent pricing and marks zero-priced models free", () => {
   const noPrice = _internal.mapModel(
     modelFixture({ pricing: null, supported_parameters: null }),
