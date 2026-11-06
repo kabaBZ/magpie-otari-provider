@@ -928,10 +928,13 @@ function buildUsage({
   const usage = { windows };
   if (windows.length === 0) {
     usage.error = dashboard
-      ? "Otari Dashboard session 无法匹配当前 Key 的预算"
+      ? "Otari Dashboard session 无法匹配当前 Key 的预算；sign in again 以补充账号登录或 session cookie"
       : management
-      ? "Otari 管理密钥无法读取用量或余额"
-      : "Otari 托管 API 的用量和余额需要管理密钥；请在插件登录时填写管理密钥。";
+        ? "Otari 管理密钥无法读取用量或余额；sign in again 以补充登录"
+        : "需要补充 Otari Dashboard 登录；点“重新登录”添加 session cookie 或账号登录（sign in again）";
+    // Keep the API-key-only account usable for model calls while telling the
+    // account row that it can be re-opened to add a Dashboard session.
+    usage.signIn = "kept";
     if (!management && !dashboard && errors.length > 0) {
       usage.error += "（自托管可继续使用 /key/usage/summary 与 /key/budget）";
     }
@@ -1157,7 +1160,6 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
 
   auth: {
     provider: providerID,
-    single: true,
     icon: ICON_URL,
     methods: [
       {

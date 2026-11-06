@@ -278,7 +278,7 @@ test("omits the wallet window when remaining_usd is null", () => {
     },
   });
   assert.equal(usage.windows.length, 0);
-  assert.equal(usage.balance, undefined);
+  assert.equal(usage.signIn, "kept");
 });
 
 test("loads usage and budget, tolerating a missing budget endpoint", async () => {
@@ -339,8 +339,9 @@ test("a 401 from usage endpoints does not expire the inference sign-in", async (
     fetchImpl,
   });
   assert.equal(errors.length, 2);
-  assert.equal(usage.signIn, undefined);
-  assert.match(usage.error, /管理密钥/);
+  assert.equal(usage.signIn, "kept");
+  assert.match(usage.error, /重新登录/);
+  assert.match(usage.error, /sign in again/);
   assert.equal(usage.windows.length, 0);
 });
 
@@ -535,6 +536,7 @@ test("plugin config and loader expose the Otari provider", async () => {
   assert.equal(hooks.auth.provider, "otari");
   assert.equal(hooks.provider.id, "otari");
   assert.equal(hooks.auth.icon, _internal.ICON_URL);
+  assert.equal(hooks.auth.single, undefined);
   const method = hooks.auth.methods[0];
   assert.equal(method.keyless, true);
   assert.deepEqual(

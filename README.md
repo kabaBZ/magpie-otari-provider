@@ -88,6 +88,10 @@ magpie plugin login otari-provider
   - 不读余额、预算、刷新时间和路由
   - 仍然可以读取模型、价格和调用模型
 
+只用 API Key 登录后，账号行会提供“重新登录”入口，点进去可以补充
+Dashboard session 或账号登录；账号列表里的添加按钮是“添加另一个 Otari
+账号”，不会覆盖已有账号。
+
 拿到 session 后，插件会读取：
 
 ```text
