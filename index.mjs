@@ -374,7 +374,9 @@ function mapModel(
     typeof model.owned_by === "string" ? model.owned_by.trim() : "";
   const orgLabel =
     ownedLabel ||
-    (ownedBy ? `organization provider ${ownedBy}` : "organization provider");
+    (ownedBy
+      ? `organization Inference providers: ${ownedBy}`
+      : "organization Inference providers");
 
   const mapped = {
     id: model.id,
@@ -413,7 +415,9 @@ function ownedLabelFor(model, context) {
   const names = provider ? context?.byProvider?.get(provider) : null;
   if (Array.isArray(names) && names.length === 1) return names[0];
   if (context?.organizationName) return context.organizationName;
-  return provider ? `organization provider ${provider}` : "organization provider";
+  return provider
+    ? `organization Inference providers: ${provider}`
+    : "organization Inference providers";
 }
 
 function bootstrapModels() {
