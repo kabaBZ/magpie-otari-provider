@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { OtariPlugin, _internal } from "../index.mjs";
 
@@ -566,7 +569,8 @@ test("plugin config and loader expose the Otari provider", async () => {
   assert.equal(method.prompts[4].placeholder, "请输入账号");
   assert.equal(method.prompts[5].placeholder, "请输入密码");
   assert.match(method.prompts[5].message, /不保存/);
-  assert.equal(hooks.auth.methods.length, 1);
+  assert.equal(hooks.auth.methods.length, 2);
+  assert.match(hooks.auth.methods[1].label, /补充现有账号/);
   assert.equal(cfg.provider.otari.name, "Otari");
   assert.equal(cfg.provider.otari.npm, "@ai-sdk/openai-compatible");
   assert.equal(cfg.provider.otari.api, _internal.DEFAULT_BASE_URL);
@@ -955,6 +959,55 @@ test("plugin options can choose a non-conflicting provider id", async () => {
   assert.ok(cfg.provider["otari-provider"]);
   assert.equal(cfg.provider["otari-provider"].name, "Otari");
   assert.equal(cfg.provider.otari, undefined);
+});
+
+test("supplement login reuses the stored API key without asking again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "magpie-otari-auth-"));
+  writeFileSync(
+    join(dir, "plugin-auth.json"),
+    JSON.stringify({
+      otari: {
+        type: "api",
+        key: "otk_stored_key",
+        metadata: { region: "global" },
+      },
+    }),
+  );
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    calls.push(parsed.pathname);
+    if (parsed.pathname === "/api/v1/wallet") {
+      return jsonResponse({ available: "2.00", currency: "USD" });
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({
+      client: { app: { log: async () => {} } },
+      directory: dir,
+    });
+    assert.equal(hooks.auth.methods.length, 2);
+    const supplement = hooks.auth.methods[1];
+    assert.deepEqual(
+      supplement.prompts.map((prompt) => prompt.key),
+      ["authMode", "dashboardSession", "email", "password"],
+    );
+
+    const result = await supplement.authorize(
+      { authMode: "cookie", dashboardSession: "session-stored" },
+      {},
+    );
+    assert.equal(result.type, "success");
+    assert.equal(result.key, "otk_stored_key");
+    assert.equal(result.metadata.dashboardSession, "session-stored");
+    assert.equal(result.metadata.region, "global");
+    assert.deepEqual(calls, ["/api/v1/wallet"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("plugin model hook returns a marked fallback list on upstream failure", async () => {

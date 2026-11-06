@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 const PROVIDER = "otari";
 const DEFAULT_BASE_URL = "https://api.otari.ai/api/v1";
 const EU_BASE_URL = "https://eu.api.otari.ai/api/v1";
@@ -1075,11 +1078,38 @@ function validateCustomBaseURL(value) {
   }
 }
 
-export const OtariPlugin = async ({ client } = {}, options = {}) => {
+export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
   const providerID = normalizeProviderID(options?.providerID);
   let retry = null;
   let retryAttempt = 0;
   let retryChoiceShown = false;
+  let supplementRetry = null;
+  let supplementRetryAttempt = 0;
+  const readStoredAccount = () => {
+    if (!directory) return { error: "找不到 Magpie 配置目录" };
+    try {
+      const store = JSON.parse(
+        readFileSync(join(directory, "plugin-auth.json"), "utf8"),
+      );
+      const keys = Object.keys(store).filter(
+        (key) => key === providerID || key.startsWith(`${providerID}#`),
+      );
+      if (keys.length === 0) return { error: "还没有 Otari 登录账号" };
+      if (keys.length > 1) {
+        return {
+          error:
+            "当前有多个 Otari 账号，请使用完整 API Key 登录方式指定账号",
+        };
+      }
+      const auth = store[keys[0]];
+      if (auth?.type !== "api" || !auth.key) {
+        return { error: "当前账号没有 API Key" };
+      }
+      return { auth, accountKey: keys[0] };
+    } catch {
+      return { error: "读取 Magpie 登录信息失败" };
+    }
+  };
   const authPrompts = [
     {
       type: "select",
@@ -1129,6 +1159,46 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
         String(value ?? "").trim()
           ? undefined
           : "请输入 otari_dashboard_session 的值",
+    },
+    {
+      type: "text",
+      key: "email",
+      when: { key: "authMode", op: "eq", value: "account" },
+      message: "Otari 账号（仅用于本次登录，不保存密码）",
+      placeholder: "请输入账号",
+    },
+    {
+      type: "password",
+      key: "password",
+      when: { key: "authMode", op: "eq", value: "account" },
+      message: "Otari 密码（仅用于本次登录，不保存）",
+      placeholder: "请输入密码",
+    },
+  ];
+  const supplementPrompts = [
+    {
+      type: "select",
+      key: "authMode",
+      message: "补充 Dashboard 登录",
+      options: [
+        {
+          label: "补充 Dashboard session cookie",
+          value: "cookie",
+          hint: "只填 otari_dashboard_session",
+        },
+        {
+          label: "补充邮箱/密码登录",
+          value: "account",
+          hint: "自动换 Dashboard session，密码不保存",
+        },
+      ],
+    },
+    {
+      type: "password",
+      key: "dashboardSession",
+      when: { key: "authMode", op: "eq", value: "cookie" },
+      message: "Otari Dashboard session（必填）",
+      placeholder: "只填 otari_dashboard_session 的值",
     },
     {
       type: "text",
@@ -1369,6 +1439,167 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
             type: "success",
             key: apiKey,
             metadata: {
+              region,
+              dashboardSession: login.session,
+              dashboardExpiresAt: login.expiresAt,
+              dashboardUserId: login.userId,
+              dashboardOrganizationId: login.organizationId,
+              accountEmail: email,
+            },
+          };
+        },
+      },
+      {
+        type: "api",
+        label: "补充现有账号的 Dashboard 登录",
+        keyless: true,
+        prompts: supplementPrompts,
+        ask(inputs = {}) {
+          if (!inputs || Object.keys(inputs).length === 0) {
+            supplementRetry = null;
+            supplementRetryAttempt = 0;
+          }
+          const promptOf = (key) =>
+            supplementPrompts.find((p) => p.key === key);
+
+          if (supplementRetry) {
+            for (const field of supplementRetry.fields) {
+              const key = `${field}-r${supplementRetry.attempt}`;
+              if (!(key in inputs)) {
+                return {
+                  ...promptOf(field),
+                  key,
+                  when: undefined,
+                };
+              }
+            }
+            supplementRetry = null;
+            return null;
+          }
+
+          if (!("authMode" in inputs)) return promptOf("authMode");
+          if (inputs.authMode === "cookie" && !("dashboardSession" in inputs)) {
+            return promptOf("dashboardSession");
+          }
+          if (inputs.authMode === "account" && !("email" in inputs)) {
+            return promptOf("email");
+          }
+          if (inputs.authMode === "account" && !("password" in inputs)) {
+            return promptOf("password");
+          }
+          return null;
+        },
+        async authorize(inputs = {}, { signal } = {}) {
+          const stored = readStoredAccount();
+          if (stored.error) {
+            return { type: "failed", error: stored.error };
+          }
+          const apiKey = stored.auth.key;
+          const region =
+            stored.auth.metadata?.region === "eu" ? "eu" : "global";
+          const baseMetadata = { ...(stored.auth.metadata ?? {}) };
+          delete baseMetadata.apiKey;
+          delete baseMetadata.password;
+          delete baseMetadata.managementKey;
+          const latest = (base) => {
+            let value = inputs?.[base];
+            let best = 0;
+            for (const key of Object.keys(inputs ?? {})) {
+              const match = key.match(new RegExp(`^${base}-r(\\d+)$`));
+              if (!match) continue;
+              const attempt = Number(match[1]);
+              if (attempt >= best) {
+                best = attempt;
+                value = inputs[key];
+              }
+            }
+            return value;
+          };
+          const fail = (fields, error) => {
+            supplementRetryAttempt += 1;
+            supplementRetry = {
+              fields,
+              attempt: supplementRetryAttempt,
+            };
+            return { type: "failed", error };
+          };
+          const clean = () => {
+            if (!inputs) return;
+            for (const key of Object.keys(inputs)) {
+              if (key === "password" || key.startsWith("password-r")) {
+                delete inputs[key];
+              }
+            }
+          };
+
+          const mode = inputs?.authMode;
+          if (mode === "cookie") {
+            const session = String(latest("dashboardSession") ?? "").trim();
+            if (!session) {
+              return fail(["dashboardSession"], "请填写 Otari Dashboard session");
+            }
+            try {
+              await fetchSessionWallet({
+                auth: {
+                  type: "api",
+                  key: apiKey,
+                  metadata: { ...baseMetadata, region, dashboardSession: session },
+                },
+                signal,
+              });
+            } catch (error) {
+              return fail(
+                ["dashboardSession"],
+                `Otari Dashboard session 无效或已过期：${error?.message ?? error}`,
+              );
+            }
+            clean();
+            supplementRetry = null;
+            supplementRetryAttempt = 0;
+            return {
+              type: "success",
+              key: apiKey,
+              metadata: {
+                ...baseMetadata,
+                region,
+                dashboardSession: session,
+              },
+            };
+          }
+
+          if (mode !== "account") {
+            return fail(["authMode"], "请选择要补充的 Dashboard 登录方式");
+          }
+          const email = String(latest("email") ?? "").trim();
+          const password = String(latest("password") ?? "");
+          if (!email) {
+            return fail(["email"], "Otari 账号邮箱必填");
+          }
+          if (!password) {
+            return fail(["password"], "Otari 账号密码必填");
+          }
+          let login;
+          try {
+            login = await loginDashboardSession({
+              email,
+              password,
+              region,
+              signal,
+            });
+          } catch (error) {
+            return fail(
+              ["email", "password"],
+              `Otari 账号登录失败：${error?.message ?? error}；点重试可重新输入`,
+            );
+          }
+          clean();
+          supplementRetry = null;
+          supplementRetryAttempt = 0;
+          return {
+            type: "success",
+            key: apiKey,
+            metadata: {
+              ...baseMetadata,
               region,
               dashboardSession: login.session,
               dashboardExpiresAt: login.expiresAt,

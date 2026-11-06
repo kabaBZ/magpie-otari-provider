@@ -92,6 +92,10 @@ magpie plugin login otari-provider
 Dashboard session 或账号登录；账号列表里的添加按钮是“添加另一个 Otari
 账号”，不会覆盖已有账号。
 
+补充登录时选择“补充现有账号的 Dashboard 登录”不会再次询问区域和 API
+Key：插件直接复用 Magpie 已保存的唯一 Otari API Key，只问 Dashboard
+session 或邮箱/密码。存在多个 Otari 账号时，请使用完整登录方式指定账号。
+
 拿到 session 后，插件会读取：
 
 ```text
