@@ -1,0 +1,43 @@
+{
+  "name": "magpie-otari-provider",
+  "version": "0.1.0",
+  "description": "Otari provider plugin for Magpie with models, pricing, usage, budget balance and chat.",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./server": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "scripts/smoke.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "magpie",
+    "otari",
+    "llm",
+    "provider"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "check": "node --check index.mjs && node --check scripts/smoke.mjs",
+    "test": "node --test",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "magpie": {
+    "name": "Otari",
+    "icon": "https://otari.ai/apple-touch-icon-v2.png",
+    "summary": {
+      "en": "Otari gateway provider with models, pricing, usage, budget balance and chat.",
+      "zh": "Otari 网关供应商，支持模型、价格、用量、预算余额与对话调用。"
+    },
+    "maxConcurrency": 8
+  }
+}
