@@ -548,6 +548,12 @@ test("plugin config and loader expose the Otari provider", async () => {
   assert.match(method.prompts[1].message, /必填/);
   assert.match(method.prompts[2].message, /可选/);
   assert.match(method.prompts[2].message, /无法获取/);
+  assert.equal(hooks.auth.methods[1].keyless, true);
+  assert.deepEqual(
+    hooks.auth.methods[1].prompts.map((prompt) => prompt.key),
+    ["region", "apiKey", "email", "password"],
+  );
+  assert.match(hooks.auth.methods[1].prompts[3].message, /不保存/);
   assert.equal(cfg.provider.otari.name, "Otari");
   assert.equal(cfg.provider.otari.npm, "@ai-sdk/openai-compatible");
   assert.equal(cfg.provider.otari.api, _internal.DEFAULT_BASE_URL);
@@ -594,7 +600,7 @@ test("API key authorizes first and the optional session is stored", async () => 
     assert.equal(result.key, "otk_test_key");
     assert.equal(result.metadata.region, "global");
     assert.equal(result.metadata.dashboardSession, "session-test");
-    assert.equal(inputs.apiKey, "");
+    assert.equal(inputs.apiKey, undefined);
     assert.equal(
       calls.find((call) => call.url.pathname === "/api/v1/wallet").headers.get(
         "cookie",
@@ -657,6 +663,88 @@ test("EU region validation uses the EU API and dashboard hosts", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("account login exchanges email/password for a session and clears the password", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    calls.push({ url: parsed, init });
+    if (parsed.pathname === "/api/v1/models") {
+      return jsonResponse({ data: [] });
+    }
+    if (parsed.pathname === "/api/v1/auth/session") {
+      return new Response(
+        JSON.stringify({
+          expires_at: "2026-11-13T06:41:23.547018Z",
+          user_id: "user-1",
+          active_organization_id: "org-1",
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "set-cookie":
+              "otari_dashboard_session=session-xyz; Path=/; HttpOnly",
+          },
+        },
+      );
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+    const inputs = {
+      region: "global",
+      apiKey: "otk_test_key",
+      email: "test@example.com",
+      password: "secret-password",
+    };
+    const result = await hooks.auth.methods[1].authorize(inputs, {});
+
+    assert.equal(result.type, "success");
+    assert.equal(result.key, "otk_test_key");
+    assert.equal(result.metadata.dashboardSession, "session-xyz");
+    assert.equal(result.metadata.dashboardExpiresAt, "2026-11-13T06:41:23.547018Z");
+    assert.equal(result.metadata.dashboardUserId, "user-1");
+    assert.equal(result.metadata.accountEmail, "test@example.com");
+    assert.equal(result.metadata.password, undefined);
+    assert.equal(inputs.password, undefined);
+    assert.equal(inputs.apiKey, undefined);
+
+    const loginCall = calls.find(
+      (call) => call.url.pathname === "/api/v1/auth/session",
+    );
+    assert.ok(loginCall);
+    const body = JSON.parse(loginCall.init.body);
+    assert.equal(body.email, "test@example.com");
+    assert.equal(body.password, "secret-password");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("account login requires email and password", async () => {
+  const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+  const noEmail = await hooks.auth.methods[1].authorize(
+    { region: "global", apiKey: "otk_test", email: "", password: "x" },
+    {},
+  );
+  assert.equal(noEmail.type, "failed");
+  assert.match(noEmail.error, /邮箱必填/);
+
+  const noPassword = await hooks.auth.methods[1].authorize(
+    {
+      region: "global",
+      apiKey: "otk_test",
+      email: "test@example.com",
+      password: "",
+    },
+    {},
+  );
+  assert.equal(noPassword.type, "failed");
+  assert.match(noPassword.error, /密码必填/);
 });
 
 test("plugin options can choose a non-conflicting provider id", async () => {

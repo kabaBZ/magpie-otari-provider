@@ -62,7 +62,11 @@ magpie plugin options otari-provider '{"providerID":"otari-provider"}'
 magpie plugin login otari-provider
 ```
 
-在 Magpie 的插件页面登录也可以。登录顺序固定为：
+在 Magpie 的插件页面登录也可以。插件提供两种登录方式。
+
+### 方式一：API Key + 可选 Dashboard session
+
+登录顺序固定为：
 
 ### 1. Otari 接入区域
 
@@ -108,6 +112,29 @@ GET /organizations/me/routing-policies
 用 `key_prefix + key_suffix` 匹配当前 Key，再用 `scope_type=api_token, scope_id=<key.id>` 找到预算，显示 `current_spend / max_budget` 和 `period_end` 刷新时间。
 
 Dashboard session 是敏感凭据，会过期。不要把整段 Cookie 发给别人；插件只把它保存在 Magpie 的 `plugin-auth.json`。
+
+### 方式二：账号邮箱/密码自动换 Dashboard session
+
+这个方式会直接调用：
+
+```text
+POST /api/v1/auth/session
+```
+
+登录顺序：
+
+1. Otari 接入区域
+2. Otari API Key（必填，用于模型调用）
+3. Otari 账号邮箱
+4. Otari 账号密码
+
+邮箱和密码只用于本次登录换取 `otari_dashboard_session`：
+
+- 密码会当场清空，不写入 `plugin-auth.json`
+- 只保存 Dashboard session、邮箱和 session 到期时间
+- 仍然需要 API Key 才能调用模型
+
+如果账号密码已经在聊天或其他地方暴露，请立即修改 Otari 账号密码，并重新登录生成新的 session。
 
 自托管和自定义 base URL 登录入口暂时隐藏，底层兼容代码保留。
 

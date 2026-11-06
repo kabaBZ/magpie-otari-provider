@@ -100,6 +100,72 @@ function sessionHeaders(session) {
   };
 }
 
+function responseSetCookies(headers) {
+  try {
+    if (typeof headers?.getSetCookie === "function") {
+      const all = headers.getSetCookie();
+      if (Array.isArray(all) && all.length) return all;
+    }
+  } catch {
+    // Older fetch implementations expose only the combined header.
+  }
+  const combined = headers?.get?.("set-cookie");
+  return combined ? [combined] : [];
+}
+
+async function loginDashboardSession({
+  email,
+  password,
+  region = "global",
+  signal,
+  fetchImpl = fetch,
+}) {
+  const base =
+    region === "eu"
+      ? "https://eu.otari.ai/api/v1"
+      : "https://otari.ai/api/v1";
+  const origin = new URL(base).origin;
+  const response = await fetchImpl(`${base}/auth/session`, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      origin,
+      referer: `${origin}/dashboard/`,
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+    },
+    body: JSON.stringify({ email, password }),
+    signal,
+  });
+  const payload = await readJSON(response, "账号登录", {
+    expireOn401: false,
+  });
+  const cookies = responseSetCookies(response.headers);
+  let session = "";
+  for (const cookie of cookies) {
+    const match = String(cookie).match(
+      /(?:^|;\s*)otari_dashboard_session=([^;]+)/,
+    );
+    if (match) {
+      session = match[1];
+      break;
+    }
+  }
+  if (!session) {
+    throw new OtariHttpError("登录成功但没有返回 Dashboard session", {
+      status: response.status,
+    });
+  }
+  return {
+    session,
+    expiresAt: payload?.expires_at ?? null,
+    userId: payload?.user_id ?? null,
+    organizationId: payload?.active_organization_id ?? null,
+  };
+}
+
 function apiURL(baseURL, path, query) {
   const base = baseURL.replace(/\/+$/, "");
   const suffix = path.startsWith("/") ? path : `/${path}`;
@@ -1091,13 +1157,106 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
             }
           }
 
-          if (inputs) inputs.apiKey = "";
+          if (inputs) delete inputs.apiKey;
           return {
             type: "success",
             key: apiKey,
             metadata: {
               region,
               dashboardSession: session || undefined,
+            },
+          };
+        },
+      },
+      {
+        type: "api",
+        label: "Otari 账号登录（邮箱/密码）",
+        keyless: true,
+        prompts: [
+          {
+            type: "select",
+            key: "region",
+            message: "Otari 接入区域",
+            options: [
+              { label: "全球 (api.otari.ai)", value: "global" },
+              { label: "欧洲 (eu.api.otari.ai)", value: "eu" },
+            ],
+          },
+          {
+            type: "password",
+            key: "apiKey",
+            message: "Otari API Key（必填，用于模型调用）",
+            placeholder: "otk_…",
+          },
+          {
+            type: "text",
+            key: "email",
+            message: "Otari 账号邮箱（仅用于本次登录，不保存密码）",
+            placeholder: "name@example.com",
+          },
+          {
+            type: "password",
+            key: "password",
+            message: "Otari 账号密码（仅用于本次登录，不保存）",
+            placeholder: "登录后只保存 Dashboard session",
+          },
+        ],
+        async authorize(inputs = {}, { signal } = {}) {
+          const region = inputs?.region === "eu" ? "eu" : "global";
+          const apiKey = String(inputs?.apiKey ?? "").trim();
+          const email = String(inputs?.email ?? "").trim();
+          const password = String(inputs?.password ?? "");
+          if (!apiKey) {
+            return { type: "failed", error: "Otari API Key 必填" };
+          }
+          if (!email) {
+            return { type: "failed", error: "Otari 账号邮箱必填" };
+          }
+          if (!password) {
+            return { type: "failed", error: "Otari 账号密码必填" };
+          }
+
+          try {
+            await fetchModels({
+              auth: { type: "api", key: apiKey, metadata: { region } },
+              signal,
+            });
+          } catch (error) {
+            return {
+              type: "failed",
+              error: `Otari API Key 验证失败：${error?.message ?? error}`,
+            };
+          }
+
+          let login;
+          try {
+            login = await loginDashboardSession({
+              email,
+              password,
+              region,
+              signal,
+            });
+          } catch (error) {
+            return {
+              type: "failed",
+              error: `Otari 账号登录失败：${error?.message ?? error}`,
+            };
+          }
+
+          if (inputs) {
+            delete inputs.apiKey;
+            delete inputs.password;
+          }
+          return {
+            type: "success",
+            key: apiKey,
+            metadata: {
+              region,
+              dashboardSession: login.session,
+              dashboardExpiresAt: login.expiresAt,
+              dashboardUserId: login.userId,
+              dashboardOrganizationId: login.organizationId,
+              accountEmail: email,
             },
           };
         },
@@ -1186,6 +1345,8 @@ export const _internal = {
   dashboardSessionFromAuth,
   dashboardBaseURL,
   sessionHeaders,
+  responseSetCookies,
+  loginDashboardSession,
   bootstrapModels,
   mapModel,
   isChatModel,
