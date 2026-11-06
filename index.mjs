@@ -329,7 +329,12 @@ function positiveInteger(value) {
 
 function mapModel(
   model,
-  { baseURL = DEFAULT_BASE_URL, pricing, providerID = PROVIDER } = {},
+  {
+    baseURL = DEFAULT_BASE_URL,
+    pricing,
+    providerID = PROVIDER,
+    ownedLabel,
+  } = {},
 ) {
   const price = pricing ?? model.pricing ?? null;
   const cost = pricingCost(price);
@@ -365,11 +370,15 @@ function mapModel(
     typeof model.name === "string" && model.name.trim()
       ? model.name.trim()
       : model.id;
+  const orgLabel =
+    ownedLabel ||
+    (typeof model.owned_by === "string" && model.owned_by.trim()) ||
+    "自有 Key";
 
   const mapped = {
     id: model.id,
     providerID,
-    name: organizationOwned ? `[自有 Key] ${displayName}` : displayName,
+    name: organizationOwned ? `[${orgLabel}] ${displayName}` : displayName,
     api: {
       id: model.id,
       url: normalizeBaseURL(baseURL),
@@ -395,6 +404,15 @@ function mapModel(
   if (price && isFreePricing(price)) mapped.free = true;
   if (organizationOwned) mapped.organizationOwned = true;
   return mapped;
+}
+
+function ownedLabelFor(model, context) {
+  const provider =
+    typeof model.owned_by === "string" ? model.owned_by.trim() : "";
+  const names = provider ? context?.byProvider?.get(provider) : null;
+  if (Array.isArray(names) && names.length === 1) return names[0];
+  if (context?.organizationName) return context.organizationName;
+  return provider || "自有 Key";
 }
 
 function bootstrapModels() {
@@ -497,12 +515,49 @@ async function listProviderModels(
     }
   }
 
+  let ownedContext = null;
+  if (
+    models.some((model) => model.pricing_source === "organization") &&
+    dashboardSessionFromAuth(auth)
+  ) {
+    try {
+      const [profile, providerKeys] = await Promise.all([
+        fetchSessionOrganizationProfile({ auth, signal, fetchImpl }),
+        fetchSessionProviderKeys({ auth, signal, fetchImpl }),
+      ]);
+      const byProvider = new Map();
+      for (const key of providerKeys) {
+        if (typeof key?.provider !== "string" || typeof key?.name !== "string") {
+          continue;
+        }
+        const names = byProvider.get(key.provider) ?? [];
+        names.push(key.name);
+        byProvider.set(key.provider, names);
+      }
+      ownedContext = {
+        organizationName:
+          typeof profile?.organization?.name === "string"
+            ? profile.organization.name
+            : null,
+        byProvider,
+      };
+    } catch {
+      // The Dashboard session is optional. If it expired or the organization
+      // endpoints are unavailable, keep the model list and fall back to the
+      // provider name (or "自有 Key") for the label.
+    }
+  }
+
   const listed = {};
   for (const model of models) {
     const mapped = mapModel(model, {
       baseURL,
       pricing: model.pricing ?? prices[model.id] ?? null,
       providerID,
+      ownedLabel:
+        model.pricing_source === "organization"
+          ? ownedLabelFor(model, ownedContext)
+          : undefined,
     });
     listed[mapped.id] = mapped;
   }
@@ -596,6 +651,35 @@ async function fetchSessionOrganizationKeys({
     signal,
     fetchImpl,
     label: "组织 Key 列表",
+  });
+  return listFromPayload(payload);
+}
+
+async function fetchSessionOrganizationProfile({
+  auth,
+  signal,
+  fetchImpl = fetch,
+}) {
+  return fetchSessionJSON({
+    auth,
+    path: "/organizations/me",
+    signal,
+    fetchImpl,
+    label: "组织信息",
+  });
+}
+
+async function fetchSessionProviderKeys({
+  auth,
+  signal,
+  fetchImpl = fetch,
+}) {
+  const payload = await fetchSessionJSON({
+    auth,
+    path: "/organizations/me/provider-keys",
+    signal,
+    fetchImpl,
+    label: "组织 Provider Key 列表",
   });
   return listFromPayload(payload);
 }
@@ -1735,6 +1819,7 @@ export const _internal = {
   loginDashboardSession,
   bootstrapModels,
   mapModel,
+  ownedLabelFor,
   isFreePricing,
   isChatModel,
   fetchModels,
@@ -1746,6 +1831,8 @@ export const _internal = {
   fetchOrganizationUsageSummary,
   fetchSessionOrganizationUsageSummary,
   fetchSessionOrganizationKeys,
+  fetchSessionOrganizationProfile,
+  fetchSessionProviderKeys,
   fetchSessionBudgets,
   fetchSessionSpendCeilings,
   fetchSessionWallet,

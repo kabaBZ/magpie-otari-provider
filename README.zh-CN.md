@@ -39,7 +39,7 @@ otari/deepseek/deepseek-v4.1-flash
 ## 功能
 
 - 从 `GET /models` 动态读取 Chat 模型。
-- 由组织自己配置的 provider key 提供的模型，会在模型选择器里标记为 `[自有 Key]`。
+- 由组织自己配置的 provider key 提供的模型，会优先显示 provider key 的名字，其次组织名，再次 provider 名。
 - 将 Otari 的每百万 Token 价格映射到 Magpie 的模型价格字段。
 - 模型列表缺少价格时，回退到 `GET /pricing/current`。
 - 读取 Dashboard 账号余额、Key 预算、刷新时间、用量和路由。
@@ -188,9 +188,15 @@ GET /api/v1/models
 模型 ID 中的后续斜杠会原样保留。
 
 `pricing_source` 为 `organization` 的模型，走的是您在
-**Organization → Providers** 里添加的 provider key。插件会给这类模型的显示名
-加上 `[自有 Key]` 前缀，用来和部署方 hosted provider 提供的模型区分开。这个
-前缀只影响显示，不会改变模型 ID，也不影响请求。
+**Organization → Providers** 里添加的 provider key。插件按以下顺序给显示名加前缀：
+
+1. provider key 的名字（例如 `[mydeepseek]`），需要 Dashboard session 能读到，
+   且该 provider 下只有一把 key；
+2. 组织名（例如 `[kaba's organization]`）；
+3. 上游 provider 名（例如 `[deepseek]`）；
+4. 以上都拿不到时用 `[自有 Key]`。
+
+这个前缀只影响显示，不会改变模型 ID，也不影响请求。
 
 ### 价格
 

@@ -128,11 +128,94 @@ test("marks models served by the organization's own provider key", () => {
   assert.equal(own.organizationOwned, true);
   assert.equal(own.name, "[自有 Key] DeepSeek V4.1 Flash");
 
+  const providerNamed = _internal.mapModel(
+    modelFixture({ pricing_source: "organization", owned_by: "deepseek" }),
+  );
+  assert.equal(providerNamed.name, "[deepseek] DeepSeek V4.1 Flash");
+
   const hosted = _internal.mapModel(
     modelFixture({ pricing_source: "configured" }),
   );
   assert.equal(hosted.organizationOwned, undefined);
   assert.equal(hosted.name, "DeepSeek V4.1 Flash");
+});
+
+test("labels an organization model with its provider key name", async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.endsWith("/models")) {
+      return jsonResponse({
+        data: [
+          modelFixture({
+            pricing_source: "organization",
+            owned_by: "deepseek",
+          }),
+        ],
+      });
+    }
+    if (value.includes("/organizations/me/provider-keys")) {
+      return jsonResponse({
+        data: [
+          { id: "key-1", provider: "deepseek", name: "mydeepseek" },
+        ],
+      });
+    }
+    if (value.endsWith("/organizations/me")) {
+      return jsonResponse({
+        organization: { name: "kaba's organization" },
+      });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+
+  const models = await _internal.listProviderModels(
+    { models: _internal.bootstrapModels() },
+    {
+      auth: {
+        type: "api",
+        key: "otk_test",
+        metadata: { dashboardSession: "session-value" },
+      },
+      fetchImpl,
+    },
+  );
+  assert.equal(
+    models["deepseek/deepseek-v4.1-flash"].name,
+    "[mydeepseek] DeepSeek V4.1 Flash",
+  );
+});
+
+test("keeps model discovery when the Dashboard session has expired", async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.endsWith("/models")) {
+      return jsonResponse({
+        data: [
+          modelFixture({
+            pricing_source: "organization",
+            owned_by: "deepseek",
+          }),
+        ],
+      });
+    }
+    return textResponse("session expired", 401);
+  };
+
+  const models = await _internal.listProviderModels(
+    { models: _internal.bootstrapModels() },
+    {
+      auth: {
+        type: "api",
+        key: "otk_test",
+        metadata: { dashboardSession: "expired-session" },
+      },
+      fetchImpl,
+    },
+  );
+  assert.equal(
+    models["deepseek/deepseek-v4.1-flash"].name,
+    "[deepseek] DeepSeek V4.1 Flash",
+  );
 });
 
 test("does not invent pricing and marks zero-priced models free", () => {
