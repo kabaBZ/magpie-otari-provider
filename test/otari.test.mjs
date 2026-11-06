@@ -539,21 +539,30 @@ test("plugin config and loader expose the Otari provider", async () => {
   assert.equal(method.keyless, true);
   assert.deepEqual(
     method.prompts.map((prompt) => prompt.key),
-    ["region", "apiKey", "dashboardSession"],
+    [
+      "region",
+      "apiKey",
+      "authMode",
+      "dashboardSession",
+      "email",
+      "password",
+    ],
   );
   assert.deepEqual(
     method.prompts[0].options.map((option) => option.value),
     ["global", "eu"],
   );
   assert.match(method.prompts[1].message, /必填/);
-  assert.match(method.prompts[2].message, /可选/);
-  assert.match(method.prompts[2].message, /无法获取/);
-  assert.equal(hooks.auth.methods[1].keyless, true);
   assert.deepEqual(
-    hooks.auth.methods[1].prompts.map((prompt) => prompt.key),
-    ["region", "apiKey", "email", "password"],
+    method.prompts[2].options.map((option) => option.value),
+    ["cookie", "account", "skip"],
   );
-  assert.match(hooks.auth.methods[1].prompts[3].message, /不保存/);
+  assert.equal(method.prompts[3].when.value, "cookie");
+  assert.equal(method.prompts[4].when.value, "account");
+  assert.equal(method.prompts[5].when.value, "account");
+  assert.match(method.prompts[3].message, /无法获取/);
+  assert.match(method.prompts[5].message, /不保存/);
+  assert.equal(hooks.auth.methods.length, 1);
   assert.equal(cfg.provider.otari.name, "Otari");
   assert.equal(cfg.provider.otari.npm, "@ai-sdk/openai-compatible");
   assert.equal(cfg.provider.otari.api, _internal.DEFAULT_BASE_URL);
@@ -592,6 +601,7 @@ test("API key authorizes first and the optional session is stored", async () => 
     const inputs = {
       region: "global",
       apiKey: "otk_test_key",
+      authMode: "cookie",
       dashboardSession: "session-test",
     };
     const result = await hooks.auth.methods[0].authorize(inputs, {});
@@ -622,6 +632,58 @@ test("API key authorization fails clearly without a key", async () => {
   assert.match(result.error, /必填/);
 });
 
+test("dashboard login can be skipped without storing a session", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/api/v1/models") {
+      return jsonResponse({ data: [] });
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+    const inputs = {
+      region: "global",
+      apiKey: "otk_test_key",
+      authMode: "skip",
+    };
+    const result = await hooks.auth.methods[0].authorize(inputs, {});
+    assert.equal(result.type, "success");
+    assert.equal(result.metadata.dashboardSession, undefined);
+    assert.equal(inputs.apiKey, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cookie mode requires a dashboard session", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/api/v1/models") {
+      return jsonResponse({ data: [] });
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+    const result = await hooks.auth.methods[0].authorize(
+      {
+        region: "global",
+        apiKey: "otk_test_key",
+        authMode: "cookie",
+        dashboardSession: "",
+      },
+      {},
+    );
+    assert.equal(result.type, "failed");
+    assert.match(result.error, /Dashboard session/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("EU region validation uses the EU API and dashboard hosts", async () => {
   const originalFetch = globalThis.fetch;
   const hosts = [];
@@ -642,6 +704,7 @@ test("EU region validation uses the EU API and dashboard hosts", async () => {
       {
         region: "eu",
         apiKey: "otk_test_key",
+        authMode: "cookie",
         dashboardSession: "session-test",
       },
       {},
@@ -698,10 +761,11 @@ test("account login exchanges email/password for a session and clears the passwo
     const inputs = {
       region: "global",
       apiKey: "otk_test_key",
+      authMode: "account",
       email: "test@example.com",
       password: "secret-password",
     };
-    const result = await hooks.auth.methods[1].authorize(inputs, {});
+    const result = await hooks.auth.methods[0].authorize(inputs, {});
 
     assert.equal(result.type, "success");
     assert.equal(result.key, "otk_test_key");
@@ -727,17 +791,24 @@ test("account login exchanges email/password for a session and clears the passwo
 
 test("account login requires email and password", async () => {
   const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
-  const noEmail = await hooks.auth.methods[1].authorize(
-    { region: "global", apiKey: "otk_test", email: "", password: "x" },
+  const noEmail = await hooks.auth.methods[0].authorize(
+    {
+      region: "global",
+      apiKey: "otk_test",
+      authMode: "account",
+      email: "",
+      password: "x",
+    },
     {},
   );
   assert.equal(noEmail.type, "failed");
   assert.match(noEmail.error, /邮箱必填/);
 
-  const noPassword = await hooks.auth.methods[1].authorize(
+  const noPassword = await hooks.auth.methods[0].authorize(
     {
       region: "global",
       apiKey: "otk_test",
+      authMode: "account",
       email: "test@example.com",
       password: "",
     },
