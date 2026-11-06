@@ -820,6 +820,126 @@ test("account login requires email and password", async () => {
   assert.match(noPassword.error, /密码必填/);
 });
 
+test("failed account login asks for account and password again", async () => {
+  const originalFetch = globalThis.fetch;
+  let loginCalls = 0;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/api/v1/models") {
+      return jsonResponse({ data: [] });
+    }
+    if (parsed.pathname === "/api/v1/auth/session") {
+      loginCalls += 1;
+      if (loginCalls === 1) {
+        return textResponse("wrong password", 401);
+      }
+      return new Response(
+        JSON.stringify({
+          expires_at: "2026-11-13T06:41:23.547018Z",
+          user_id: "user-1",
+          active_organization_id: "org-1",
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "set-cookie":
+              "otari_dashboard_session=retry-session; Path=/; HttpOnly",
+          },
+        },
+      );
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+    const method = hooks.auth.methods[0];
+    const inputs = {
+      region: "global",
+      apiKey: "otk_test_key",
+      authMode: "account",
+      email: "old@example.com",
+      password: "wrong-password",
+    };
+
+    const first = await method.authorize(inputs, {});
+    assert.equal(first.type, "failed");
+    assert.match(first.error, /账号登录失败/);
+
+    const choice = method.ask(inputs);
+    assert.equal(choice.key, "authMode");
+    assert.deepEqual(
+      choice.options.map((option) => option.value),
+      ["account", "skip"],
+    );
+
+    const emailPrompt = method.ask(inputs);
+    assert.equal(emailPrompt.key, "email-r1");
+    assert.equal(emailPrompt.placeholder, "请输入账号");
+    inputs[emailPrompt.key] = "new@example.com";
+
+    const passwordPrompt = method.ask(inputs);
+    assert.equal(passwordPrompt.key, "password-r1");
+    assert.equal(passwordPrompt.placeholder, "请输入密码");
+    inputs[passwordPrompt.key] = "new-password";
+
+    assert.equal(method.ask(inputs), null);
+    const second = await method.authorize(inputs, {});
+    assert.equal(second.type, "success");
+    assert.equal(second.metadata.dashboardSession, "retry-session");
+    assert.equal(second.metadata.accountEmail, "new@example.com");
+    assert.equal(inputs.password, undefined);
+    assert.equal(inputs["password-r1"], undefined);
+    assert.equal(inputs.apiKey, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("failed account login can skip and keep only the API key", async () => {
+  const originalFetch = globalThis.fetch;
+  let loginCalls = 0;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/api/v1/models") {
+      return jsonResponse({ data: [] });
+    }
+    if (parsed.pathname === "/api/v1/auth/session") {
+      loginCalls += 1;
+      return textResponse("wrong password", 401);
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+  try {
+    const hooks = await OtariPlugin({ client: { app: { log: async () => {} } } });
+    const method = hooks.auth.methods[0];
+    const inputs = {
+      region: "global",
+      apiKey: "otk_test_key",
+      authMode: "account",
+      email: "old@example.com",
+      password: "wrong-password",
+    };
+
+    const first = await method.authorize(inputs, {});
+    assert.equal(first.type, "failed");
+    assert.equal(loginCalls, 1);
+
+    const choice = method.ask(inputs);
+    assert.equal(choice.key, "authMode");
+    inputs.authMode = "skip";
+    assert.equal(method.ask(inputs), null);
+
+    const skipped = await method.authorize(inputs, {});
+    assert.equal(skipped.type, "success");
+    assert.equal(skipped.metadata.dashboardSession, undefined);
+    assert.equal(loginCalls, 1);
+    assert.equal(inputs.apiKey, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("plugin options can choose a non-conflicting provider id", async () => {
   const hooks = await OtariPlugin(
     { client: { app: { log: async () => {} } } },

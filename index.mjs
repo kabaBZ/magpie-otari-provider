@@ -1074,6 +1074,74 @@ function validateCustomBaseURL(value) {
 
 export const OtariPlugin = async ({ client } = {}, options = {}) => {
   const providerID = normalizeProviderID(options?.providerID);
+  let retry = null;
+  let retryAttempt = 0;
+  let retryChoiceShown = false;
+  const authPrompts = [
+    {
+      type: "select",
+      key: "region",
+      message: "Otari 接入区域",
+      options: [
+        { label: "全球 (api.otari.ai)", value: "global" },
+        { label: "欧洲 (eu.api.otari.ai)", value: "eu" },
+      ],
+    },
+    {
+      type: "password",
+      key: "apiKey",
+      message: "Otari API Key（必填）",
+      placeholder: "otk_…",
+    },
+    {
+      type: "select",
+      key: "authMode",
+      message: "Dashboard 登录方式（二选一，也可跳过）",
+      options: [
+        {
+          label: "使用 Dashboard session cookie",
+          value: "cookie",
+          hint: "手动粘贴 otari_dashboard_session",
+        },
+        {
+          label: "使用邮箱/密码登录（自动获取 session）",
+          value: "account",
+          hint: "密码只用于本次登录，不保存",
+        },
+        {
+          label: "跳过（只能读取模型和价格）",
+          value: "skip",
+          hint: "无法获取余额、Key 预算、刷新时间和路由",
+        },
+      ],
+    },
+    {
+      type: "password",
+      key: "dashboardSession",
+      when: { key: "authMode", op: "eq", value: "cookie" },
+      message:
+        "Otari Dashboard session（必填；不填无法获取账号余额、Key 预算、刷新时间和路由策略）",
+      placeholder: "只填 otari_dashboard_session 的值",
+      validate: (value) =>
+        String(value ?? "").trim()
+          ? undefined
+          : "请输入 otari_dashboard_session 的值",
+    },
+    {
+      type: "text",
+      key: "email",
+      when: { key: "authMode", op: "eq", value: "account" },
+      message: "Otari 账号（仅用于本次登录，不保存密码）",
+      placeholder: "请输入账号",
+    },
+    {
+      type: "password",
+      key: "password",
+      when: { key: "authMode", op: "eq", value: "account" },
+      message: "Otari 密码（仅用于本次登录，不保存）",
+      placeholder: "请输入密码",
+    },
+  ];
 
   return {
   config: async (cfg) => {
@@ -1089,83 +1157,111 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
 
   auth: {
     provider: providerID,
+    single: true,
     icon: ICON_URL,
     methods: [
       {
         type: "api",
         label: "Otari API Key",
         keyless: true,
-        prompts: [
-          {
-            type: "select",
-            key: "region",
-            message: "Otari 接入区域",
-            options: [
-              { label: "全球 (api.otari.ai)", value: "global" },
-              { label: "欧洲 (eu.api.otari.ai)", value: "eu" },
-            ],
-          },
-          {
-            type: "password",
-            key: "apiKey",
-            message: "Otari API Key（必填）",
-            placeholder: "otk_…",
-          },
-          {
-            type: "select",
-            key: "authMode",
-            message: "Dashboard 登录方式（二选一，也可跳过）",
-            options: [
-              {
-                label: "使用 Dashboard session cookie",
-                value: "cookie",
-                hint: "手动粘贴 otari_dashboard_session",
-              },
-              {
-                label: "使用邮箱/密码登录（自动获取 session）",
-                value: "account",
-                hint: "密码只用于本次登录，不保存",
-              },
-              {
-                label: "跳过（只能读取模型和价格）",
-                value: "skip",
-                hint: "无法获取余额、Key 预算、刷新时间和路由",
-              },
-            ],
-          },
-          {
-            type: "password",
-            key: "dashboardSession",
-            when: { key: "authMode", op: "eq", value: "cookie" },
-            message:
-              "Otari Dashboard session（必填；不填无法获取账号余额、Key 预算、刷新时间和路由策略）",
-            placeholder:
-              "只填 otari_dashboard_session 的值",
-            validate: (value) =>
-              String(value ?? "").trim()
-                ? undefined
-                : "请输入 otari_dashboard_session 的值",
-          },
-          {
-            type: "text",
-            key: "email",
-            when: { key: "authMode", op: "eq", value: "account" },
-            message: "Otari 账号（仅用于本次登录，不保存密码）",
-            placeholder: "请输入账号",
-          },
-          {
-            type: "password",
-            key: "password",
-            when: { key: "authMode", op: "eq", value: "account" },
-            message: "Otari 密码（仅用于本次登录，不保存）",
-            placeholder: "请输入密码",
-          },
-        ],
+        prompts: authPrompts,
+        ask(inputs = {}) {
+          if (!inputs || Object.keys(inputs).length === 0) {
+            retry = null;
+            retryAttempt = 0;
+            retryChoiceShown = false;
+          }
+          const promptOf = (key) => authPrompts.find((p) => p.key === key);
+
+          if (retry) {
+            if (retry.chooseSkip && !retryChoiceShown) {
+              retryChoiceShown = true;
+              return {
+                type: "select",
+                key: "authMode",
+                message: "登录失败，接下来怎么做？",
+                options: [
+                  { label: "重新输入账号密码", value: "account" },
+                  {
+                    label: "跳过登录，只使用 API Key",
+                    value: "skip",
+                    hint: "不获取、不保存 Dashboard session",
+                  },
+                ],
+              };
+            }
+            if (retry.chooseSkip && inputs.authMode === "skip") {
+              retry = null;
+              retryChoiceShown = false;
+              return null;
+            }
+            for (const field of retry.fields) {
+              const key = `${field}-r${retry.attempt}`;
+              if (!(key in inputs)) {
+                return {
+                  ...promptOf(field),
+                  key,
+                  when: undefined,
+                };
+              }
+            }
+            retry = null;
+            retryChoiceShown = false;
+            return null;
+          }
+
+          if (!("region" in inputs)) return promptOf("region");
+          if (!("apiKey" in inputs)) return promptOf("apiKey");
+          if (!("authMode" in inputs)) return promptOf("authMode");
+          if (inputs.authMode === "cookie" && !("dashboardSession" in inputs)) {
+            return promptOf("dashboardSession");
+          }
+          if (inputs.authMode === "account" && !("email" in inputs)) {
+            return promptOf("email");
+          }
+          if (inputs.authMode === "account" && !("password" in inputs)) {
+            return promptOf("password");
+          }
+          return null;
+        },
         async authorize(inputs = {}, { signal } = {}) {
           const region = inputs?.region === "eu" ? "eu" : "global";
-          const apiKey = String(inputs?.apiKey ?? "").trim();
+          const latest = (base) => {
+            let value = inputs?.[base];
+            let best = 0;
+            for (const key of Object.keys(inputs ?? {})) {
+              const match = key.match(new RegExp(`^${base}-r(\\d+)$`));
+              if (!match) continue;
+              const attempt = Number(match[1]);
+              if (attempt >= best) {
+                best = attempt;
+                value = inputs[key];
+              }
+            }
+            return value;
+          };
+          const fail = (fields, error, chooseSkip = false) => {
+            retryAttempt += 1;
+            retry = { fields, attempt: retryAttempt, chooseSkip };
+            retryChoiceShown = false;
+            return { type: "failed", error };
+          };
+          const cleanSecrets = () => {
+            if (!inputs) return;
+            for (const key of Object.keys(inputs)) {
+              if (
+                key === "apiKey" ||
+                key.startsWith("apiKey-r") ||
+                key === "password" ||
+                key.startsWith("password-r")
+              ) {
+                delete inputs[key];
+              }
+            }
+          };
+          const apiKey = String(latest("apiKey") ?? "").trim();
           if (!apiKey) {
-            return { type: "failed", error: "Otari API Key 必填" };
+            return fail(["apiKey"], "Otari API Key 必填");
           }
           const mode = inputs?.authMode;
           const verifyApiKey = async () => {
@@ -1182,8 +1278,11 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
 
           if (mode === "skip") {
             const keyError = await verifyApiKey();
-            if (keyError) return { type: "failed", error: keyError };
-            if (inputs) delete inputs.apiKey;
+            if (keyError) return fail(["apiKey"], keyError);
+            cleanSecrets();
+            retry = null;
+            retryAttempt = 0;
+            retryChoiceShown = false;
             return {
               type: "success",
               key: apiKey,
@@ -1192,15 +1291,15 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
           }
 
           if (mode === "cookie") {
-            const session = String(inputs?.dashboardSession ?? "").trim();
+            const session = String(latest("dashboardSession") ?? "").trim();
             if (!session) {
-              return {
-                type: "failed",
-                error: "请填写 Otari Dashboard session，或选择账密登录/跳过",
-              };
+              return fail(
+                ["dashboardSession"],
+                "请填写 Otari Dashboard session，或选择账密登录/跳过",
+              );
             }
             const keyError = await verifyApiKey();
-            if (keyError) return { type: "failed", error: keyError };
+            if (keyError) return fail(["apiKey"], keyError);
             try {
               await fetchSessionWallet({
                 auth: {
@@ -1211,12 +1310,15 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
                 signal,
               });
             } catch (error) {
-              return {
-                type: "failed",
-                error: `Otari Dashboard session 无效或已过期：${error?.message ?? error}`,
-              };
+              return fail(
+                ["dashboardSession"],
+                `Otari Dashboard session 无效或已过期：${error?.message ?? error}`,
+              );
             }
-            if (inputs) delete inputs.apiKey;
+            cleanSecrets();
+            retry = null;
+            retryAttempt = 0;
+            retryChoiceShown = false;
             return {
               type: "success",
               key: apiKey,
@@ -1225,22 +1327,22 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
           }
 
           if (mode !== "account") {
-            return {
-              type: "failed",
-              error: "请选择 Dashboard 登录方式：cookie、account 或 skip",
-            };
+            return fail(
+              ["authMode"],
+              "请选择 Dashboard 登录方式：cookie、account 或 skip",
+            );
           }
 
-          const email = String(inputs?.email ?? "").trim();
-          const password = String(inputs?.password ?? "");
+          const email = String(latest("email") ?? "").trim();
+          const password = String(latest("password") ?? "");
           if (!email) {
-            return { type: "failed", error: "Otari 账号邮箱必填" };
+            return fail(["email"], "Otari 账号邮箱必填");
           }
           if (!password) {
-            return { type: "failed", error: "Otari 账号密码必填" };
+            return fail(["password"], "Otari 账号密码必填");
           }
           const keyError = await verifyApiKey();
-          if (keyError) return { type: "failed", error: keyError };
+          if (keyError) return fail(["apiKey"], keyError);
           let login;
           try {
             login = await loginDashboardSession({
@@ -1250,16 +1352,17 @@ export const OtariPlugin = async ({ client } = {}, options = {}) => {
               signal,
             });
           } catch (error) {
-            return {
-              type: "failed",
-              error: `Otari 账号登录失败：${error?.message ?? error}`,
-            };
+            return fail(
+              ["email", "password"],
+              `Otari 账号登录失败：${error?.message ?? error}；点重试可重新输入或跳过登录`,
+              true,
+            );
           }
 
-          if (inputs) {
-            delete inputs.apiKey;
-            delete inputs.password;
-          }
+          cleanSecrets();
+          retry = null;
+          retryAttempt = 0;
+          retryChoiceShown = false;
           return {
             type: "success",
             key: apiKey,
