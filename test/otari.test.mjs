@@ -994,6 +994,8 @@ test("supplement login reuses the stored API key without asking again", async ()
       supplement.prompts.map((prompt) => prompt.key),
       ["authMode", "dashboardSession", "email", "password"],
     );
+    assert.equal(supplement.ask({}).key, "authMode");
+    assert.equal(hooks.auth.single, true);
 
     const result = await supplement.authorize(
       { authMode: "cookie", dashboardSession: "session-stored" },
@@ -1003,6 +1005,7 @@ test("supplement login reuses the stored API key without asking again", async ()
     assert.equal(result.key, "otk_stored_key");
     assert.equal(result.metadata.dashboardSession, "session-stored");
     assert.equal(result.metadata.region, "global");
+    assert.equal(hooks.auth.single, false);
     assert.deepEqual(calls, ["/api/v1/wallet"]);
   } finally {
     globalThis.fetch = originalFetch;

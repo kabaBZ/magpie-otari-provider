@@ -1215,6 +1215,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
       placeholder: "请输入密码",
     },
   ];
+  const authHook = { provider: providerID, icon: ICON_URL };
 
   return {
   config: async (cfg) => {
@@ -1228,9 +1229,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
     }
   },
 
-  auth: {
-    provider: providerID,
-    icon: ICON_URL,
+  auth: Object.assign(authHook, {
     methods: [
       {
         type: "api",
@@ -1238,6 +1237,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
         keyless: true,
         prompts: authPrompts,
         ask(inputs = {}) {
+          authHook.single = false;
           if (!inputs || Object.keys(inputs).length === 0) {
             retry = null;
             retryAttempt = 0;
@@ -1297,6 +1297,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
           return null;
         },
         async authorize(inputs = {}, { signal } = {}) {
+          authHook.single = false;
           const region = inputs?.region === "eu" ? "eu" : "global";
           const latest = (base) => {
             let value = inputs?.[base];
@@ -1455,6 +1456,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
         keyless: true,
         prompts: supplementPrompts,
         ask(inputs = {}) {
+          authHook.single = true;
           if (!inputs || Object.keys(inputs).length === 0) {
             supplementRetry = null;
             supplementRetryAttempt = 0;
@@ -1490,6 +1492,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
           return null;
         },
         async authorize(inputs = {}, { signal } = {}) {
+          authHook.single = false;
           const stored = readStoredAccount();
           if (stored.error) {
             return { type: "failed", error: stored.error };
@@ -1649,7 +1652,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
         return { error: "无法读取 Otari 用量", windows: [] };
       }
     },
-  },
+  }),
 
   provider: {
     id: providerID,
