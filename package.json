@@ -23,6 +23,14 @@
     "llm",
     "provider"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kabaBZ/magpie-otari-provider.git"
+  },
+  "homepage": "https://github.com/kabaBZ/magpie-otari-provider#readme",
+  "bugs": {
+    "url": "https://github.com/kabaBZ/magpie-otari-provider/issues"
+  },
   "license": "MIT",
   "scripts": {
     "check": "node --check index.mjs && node --check scripts/smoke.mjs",
@@ -40,5 +48,8 @@
       "zh": "Otari 网关供应商，支持模型、价格、用量、预算余额与对话调用。"
     },
     "maxConcurrency": 8
+  },
+  "dependencies": {
+    "magpie-otari-provider": "file:.pkgtest/magpie-otari-provider-0.1.0.tgz"
   }
 }

@@ -147,6 +147,49 @@ test("does not invent pricing and marks zero-priced models free", () => {
   });
 });
 
+test("marks a model free only when every stated price is zero", () => {
+  const zero = {
+    input_price_per_million: 0,
+    output_price_per_million: 0,
+  };
+  assert.equal(_internal.isFreePricing(zero), true);
+
+  // A missing input rate is unknown, not free.
+  assert.equal(_internal.isFreePricing({ output_price_per_million: 0 }), false);
+
+  // Priced per request or image, not per token.
+  assert.equal(_internal.isFreePricing({ ...zero, unit: "request" }), false);
+
+  // Free only inside the first tier: a long request is still billed.
+  assert.equal(
+    _internal.isFreePricing({
+      ...zero,
+      pricing_tiers: [
+        { min_input_tokens: 32000, input_price_per_million: 5 },
+      ],
+    }),
+    false,
+  );
+
+  // Tiers that stay at zero do not make it paid.
+  assert.equal(
+    _internal.isFreePricing({
+      ...zero,
+      pricing_tiers: [
+        { min_input_tokens: 32000, input_price_per_million: 0 },
+      ],
+    }),
+    true,
+  );
+});
+
+test("does not mark a model free when its input price is missing", () => {
+  const mapped = _internal.mapModel(
+    modelFixture({ pricing: { output_price_per_million: 0 } }),
+  );
+  assert.equal(mapped.free, undefined);
+});
+
 test("fetches only chat models and keeps nested slashes in ids", async () => {
   const seen = [];
   const fetchImpl = async (url, init) => {

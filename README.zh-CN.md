@@ -72,7 +72,19 @@ API Key 始终用于模型调用；Dashboard session 只用于账号级数据读
 
 ## 安装
 
-在本目录运行：
+从 npm 安装：
+
+```bash
+magpie plugin add magpie-otari-provider
+```
+
+从 git 仓库安装：
+
+```bash
+magpie plugin add github:kabaBZ/magpie-otari-provider
+```
+
+从本地目录安装：
 
 ```bash
 magpie plugin add .
@@ -189,6 +201,15 @@ GET /api/v1/models
 
 Magpie 无法表达的分层价格不会伪造，插件使用首选 offering 的基础价。
 
+> [!IMPORTANT]
+> Otari 会在请求的可计费输入超过某一档的 `min_input_tokens` 后提高单价。
+> Magpie 没有表示分层价格的字，所以模型卡片只显示基础档：长上下文请求的
+> 实际花费可能高于卡片上的价格。插件不会把任何一档向下取成 0。
+
+只有 Otari 自己声明输入、输出都是每百万 Token 0 元时，模型才会被标为
+`free`。缺少价格字段按“未知”处理，不按 0 处理；带有非零
+`pricing_tiers` 的模型不会被标为免费。
+
 ### 余额、用量和路由
 
 Dashboard session 会读取以下接口：
@@ -258,7 +279,7 @@ npm test
 测试使用 Node 内置测试框架和 mock HTTP 响应，覆盖：
 
 - 供应商和 Prompt 结构；
-- 模型和价格映射；
+- 模型和价格映射（含免费价格判定）；
 - API Key、cookie、账密登录；
 - 跳过 Dashboard 登录；
 - 错误账密后的重试；

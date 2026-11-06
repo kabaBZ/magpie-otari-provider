@@ -7,8 +7,8 @@ const EU_BASE_URL = "https://eu.api.otari.ai/api/v1";
 const FALLBACK_MODEL_ID = "deepseek/deepseek-v4-pro-0813";
 const ICON_URL = "https://otari.ai/apple-touch-icon-v2.png";
 const NPM_PACKAGE = "@ai-sdk/openai-compatible";
-const PRICING_PAGE_SIZE = 200;
-const MAX_PRICING_PAGES = 20;
+const PRICING_PAGE_SIZE = 1000;
+const MAX_PRICING_PAGES = 5;
 const USAGE_WINDOW_DAYS = 30;
 const FALLBACK_SYMBOL = Symbol.for("magpie.fellBack");
 
@@ -287,14 +287,39 @@ function pricingCost(pricing) {
 }
 
 function isFreePricing(pricing) {
-  const cost = pricingCost(pricing);
-  if (!cost) return false;
-  return (
-    cost.input === 0 &&
-    cost.output === 0 &&
-    cost.cache.read === 0 &&
-    cost.cache.write === 0
-  );
+  if (!pricing || typeof pricing !== "object") return false;
+
+  // Otari prices per token unless it says otherwise. A per-request, per-image
+  // or per-second row is not a free model just because its token rate is 0.
+  const unit = typeof pricing.unit === "string" ? pricing.unit : "token";
+  if (unit !== "token") return false;
+
+  // Both rates must be stated. pricingCost fills a missing rate with 0 so a
+  // model can still be listed, but a missing rate is unknown, not free.
+  const input = finiteNumber(pricing.input_price_per_million);
+  const output = finiteNumber(pricing.output_price_per_million);
+  if (input !== 0 || output !== 0) return false;
+
+  // Cache rates are optional and may be omitted; when given they must be 0.
+  const cacheRead = finiteNumber(pricing.cache_read_price_per_million);
+  const cacheWrite = finiteNumber(pricing.cache_write_price_per_million);
+  if (cacheRead !== null && cacheRead !== 0) return false;
+  if (cacheWrite !== null && cacheWrite !== 0) return false;
+
+  // A tier above the base rate means a long request is billed, so the model
+  // is only free while the request stays inside the first tier.
+  const tiers = Array.isArray(pricing.pricing_tiers)
+    ? pricing.pricing_tiers
+    : [];
+  for (const tier of tiers) {
+    if (!tier || typeof tier !== "object") continue;
+    const tierInput = finiteNumber(tier.input_price_per_million);
+    const tierOutput = finiteNumber(tier.output_price_per_million);
+    if (tierInput !== null && tierInput !== 0) return false;
+    if (tierOutput !== null && tierOutput !== 0) return false;
+  }
+
+  return true;
 }
 
 function positiveInteger(value) {
@@ -1441,6 +1466,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
             key: apiKey,
             metadata: {
               region,
+              email,
               dashboardSession: login.session,
               dashboardExpiresAt: login.expiresAt,
               dashboardUserId: login.userId,
@@ -1604,6 +1630,7 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
             metadata: {
               ...baseMetadata,
               region,
+              email,
               dashboardSession: login.session,
               dashboardExpiresAt: login.expiresAt,
               dashboardUserId: login.userId,
@@ -1701,6 +1728,7 @@ export const _internal = {
   loginDashboardSession,
   bootstrapModels,
   mapModel,
+  isFreePricing,
   isChatModel,
   fetchModels,
   fetchCurrentPricing,

@@ -72,7 +72,19 @@ The API key is always used for inference. The Dashboard session is only used for
 
 ## Installation
 
-From this directory:
+From npm:
+
+```bash
+magpie plugin add magpie-otari-provider
+```
+
+From a git repository:
+
+```bash
+magpie plugin add github:kabaBZ/magpie-otari-provider
+```
+
+From a local checkout:
 
 ```bash
 magpie plugin add .
@@ -189,6 +201,16 @@ The following Magpie cost fields are populated:
 
 Tiered prices that Magpie cannot represent are not invented; the first-offering base price is used.
 
+> [!IMPORTANT]
+> Otari raises a model's rate once a request's billable input passes a tier's
+> `min_input_tokens`. Magpie has no field for tiered prices, so the model card
+> shows the base tier only: a long-context request can cost more than the rate
+> displayed there. The plugin never rounds a tier down to zero.
+
+A model is marked `free` only when Otari itself states a per-token price of
+zero for both input and output. A missing price field is treated as unknown,
+not as zero, and a model with a paid `pricing_tiers` entry is not marked free.
+
 ### Balance, usage and routing
 
 Dashboard-authenticated reads use these endpoints:
@@ -258,7 +280,7 @@ npm test
 The test suite uses Node's built-in test runner and mocked HTTP responses. It covers:
 
 - provider and Prompt structure;
-- model and pricing mapping;
+- model and pricing mapping, including the free-price guard;
 - API key, cookie and account login modes;
 - skipped Dashboard login;
 - retry after invalid credentials;
