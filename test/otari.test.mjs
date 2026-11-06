@@ -126,12 +126,15 @@ test("marks models served by the organization's own provider key", () => {
     modelFixture({ pricing_source: "organization" }),
   );
   assert.equal(own.organizationOwned, true);
-  assert.equal(own.name, "[自有 Key] DeepSeek V4.1 Flash");
+  assert.equal(own.name, "[organization provider] DeepSeek V4.1 Flash");
 
   const providerNamed = _internal.mapModel(
     modelFixture({ pricing_source: "organization", owned_by: "deepseek" }),
   );
-  assert.equal(providerNamed.name, "[deepseek] DeepSeek V4.1 Flash");
+  assert.equal(
+    providerNamed.name,
+    "[organization provider deepseek] DeepSeek V4.1 Flash",
+  );
 
   const hosted = _internal.mapModel(
     modelFixture({ pricing_source: "configured" }),
@@ -214,7 +217,7 @@ test("keeps model discovery when the Dashboard session has expired", async () =>
   );
   assert.equal(
     models["deepseek/deepseek-v4.1-flash"].name,
-    "[deepseek] DeepSeek V4.1 Flash",
+    "[organization provider deepseek] DeepSeek V4.1 Flash",
   );
 });
 

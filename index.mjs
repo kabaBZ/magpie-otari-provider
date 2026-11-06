@@ -370,10 +370,11 @@ function mapModel(
     typeof model.name === "string" && model.name.trim()
       ? model.name.trim()
       : model.id;
+  const ownedBy =
+    typeof model.owned_by === "string" ? model.owned_by.trim() : "";
   const orgLabel =
     ownedLabel ||
-    (typeof model.owned_by === "string" && model.owned_by.trim()) ||
-    "自有 Key";
+    (ownedBy ? `organization provider ${ownedBy}` : "organization provider");
 
   const mapped = {
     id: model.id,
@@ -412,7 +413,7 @@ function ownedLabelFor(model, context) {
   const names = provider ? context?.byProvider?.get(provider) : null;
   if (Array.isArray(names) && names.length === 1) return names[0];
   if (context?.organizationName) return context.organizationName;
-  return provider || "自有 Key";
+  return provider ? `organization provider ${provider}` : "organization provider";
 }
 
 function bootstrapModels() {
