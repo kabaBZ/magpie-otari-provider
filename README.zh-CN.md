@@ -187,11 +187,12 @@ GET /api/v1/models
 
 模型 ID 中的后续斜杠会原样保留。
 
-`pricing_source` 为 `organization` 的模型，走的是您在
-**Organization → Providers** 里添加的 provider key。插件按以下顺序给显示名加前缀：
+由您在 **Organization → Providers** 里添加的 provider key 提供的模型，会加显示前缀。
+插件先读 `GET /organizations/me/provider-keys`，再对每把 key 请求
+`GET /models?provider=<key>`：Otari 只在这条查询里把这些模型标成
+`organization`，普通 `/models` 列表一律报 `configured`。前缀按以下顺序选择：
 
-1. provider key 的名字（例如 `[mydeepseek]`），需要 Dashboard session 能读到，
-   且该 provider 下只有一把 key；
+1. 实际提供该模型的那把 provider key 的名字（例如 `[mydeepseek]`）；
 2. 组织名（例如 `[kaba's organization]`）；
 3. `organization Inference providers: <provider>`（例如
    `[organization Inference providers: deepseek]`）；

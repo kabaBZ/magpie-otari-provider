@@ -1,6 +1,6 @@
 {
   "name": "magpie-otari-provider",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Otari provider plugin for Magpie with models, pricing, usage, budget balance and chat.",
   "type": "module",
   "main": "./index.mjs",

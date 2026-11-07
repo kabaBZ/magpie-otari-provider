@@ -147,9 +147,29 @@ test("marks models served by the organization's own provider key", () => {
 });
 
 test("labels an organization model with its provider key name", async () => {
+  const calls = [];
   const fetchImpl = async (url) => {
     const value = String(url);
-    if (value.endsWith("/models")) {
+    calls.push(value);
+    if (value.includes("/organizations/me/provider-keys")) {
+      return jsonResponse({
+        data: [
+          {
+            id: "key-1",
+            provider: "deepseek",
+            slug: "mydeepseek",
+            name: "mydeepseek",
+            serving_count: 1,
+          },
+        ],
+      });
+    }
+    if (value.endsWith("/organizations/me")) {
+      return jsonResponse({
+        organization: { name: "kaba's organization" },
+      });
+    }
+    if (value.includes("/models?provider=mydeepseek")) {
       return jsonResponse({
         data: [
           modelFixture({
@@ -159,16 +179,9 @@ test("labels an organization model with its provider key name", async () => {
         ],
       });
     }
-    if (value.includes("/organizations/me/provider-keys")) {
+    if (value.endsWith("/models")) {
       return jsonResponse({
-        data: [
-          { id: "key-1", provider: "deepseek", name: "mydeepseek" },
-        ],
-      });
-    }
-    if (value.endsWith("/organizations/me")) {
-      return jsonResponse({
-        organization: { name: "kaba's organization" },
+        data: [modelFixture({ pricing_source: "configured" })],
       });
     }
     throw new Error(`unexpected URL: ${value}`);
@@ -189,6 +202,10 @@ test("labels an organization model with its provider key name", async () => {
     models["deepseek/deepseek-v4.1-flash"].name,
     "[mydeepseek] DeepSeek V4.1 Flash",
   );
+  assert.ok(
+    calls.some((value) => value.includes("/models?provider=mydeepseek")),
+    "the plugin must ask for the provider key's own listing",
+  );
 });
 
 test("keeps model discovery when the Dashboard session has expired", async () => {
@@ -196,12 +213,7 @@ test("keeps model discovery when the Dashboard session has expired", async () =>
     const value = String(url);
     if (value.endsWith("/models")) {
       return jsonResponse({
-        data: [
-          modelFixture({
-            pricing_source: "organization",
-            owned_by: "deepseek",
-          }),
-        ],
+        data: [modelFixture({ pricing_source: "configured" })],
       });
     }
     return textResponse("session expired", 401);
@@ -220,8 +232,124 @@ test("keeps model discovery when the Dashboard session has expired", async () =>
   );
   assert.equal(
     models["deepseek/deepseek-v4.1-flash"].name,
-    "[organization Inference providers: deepseek] DeepSeek V4.1 Flash",
+    "DeepSeek V4.1 Flash",
   );
+});
+
+test("falls back to the organization name when two keys serve one provider", async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes("/organizations/me/provider-keys")) {
+      return jsonResponse({
+        data: [
+          {
+            id: "key-1",
+            provider: "deepseek",
+            slug: "ds-one",
+            name: "ds-one",
+            serving_count: 1,
+          },
+          {
+            id: "key-2",
+            provider: "deepseek",
+            slug: "ds-two",
+            name: "ds-two",
+            serving_count: 1,
+          },
+        ],
+      });
+    }
+    if (value.endsWith("/organizations/me")) {
+      return jsonResponse({
+        organization: { name: "kaba's organization" },
+      });
+    }
+    if (value.includes("/models?provider=")) {
+      return textResponse("unavailable", 500);
+    }
+    if (value.endsWith("/models")) {
+      return jsonResponse({
+        data: [
+          modelFixture({
+            pricing_source: "organization",
+            owned_by: "deepseek",
+          }),
+        ],
+      });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+
+  const models = await _internal.listProviderModels(
+    { models: _internal.bootstrapModels() },
+    {
+      auth: {
+        type: "api",
+        key: "otk_test",
+        metadata: { dashboardSession: "session-value" },
+      },
+      fetchImpl,
+    },
+  );
+  assert.equal(
+    models["deepseek/deepseek-v4.1-flash"].name,
+    "[kaba's organization] DeepSeek V4.1 Flash",
+  );
+});
+
+test("adds a model only the organization provider key lists", async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes("/organizations/me/provider-keys")) {
+      return jsonResponse({
+        data: [
+          {
+            id: "key-1",
+            provider: "deepseek",
+            slug: "mydeepseek",
+            name: "mydeepseek",
+            serving_count: 1,
+          },
+        ],
+      });
+    }
+    if (value.endsWith("/organizations/me")) {
+      return jsonResponse({
+        organization: { name: "kaba's organization" },
+      });
+    }
+    if (value.includes("/models?provider=mydeepseek")) {
+      return jsonResponse({
+        data: [
+          {
+            id: "deepseek/only-org",
+            name: "Only Org",
+            owned_by: "deepseek",
+            type: "chat",
+            pricing_source: "organization",
+          },
+        ],
+      });
+    }
+    if (value.endsWith("/models")) {
+      return jsonResponse({ data: [modelFixture()] });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+
+  const models = await _internal.listProviderModels(
+    { models: _internal.bootstrapModels() },
+    {
+      auth: {
+        type: "api",
+        key: "otk_test",
+        metadata: { dashboardSession: "session-value" },
+      },
+      fetchImpl,
+    },
+  );
+  assert.equal(models["deepseek/only-org"].name, "[mydeepseek] Only Org");
+  assert.equal(models["deepseek/only-org"].organizationOwned, true);
 });
 
 test("does not invent pricing and marks zero-priced models free", () => {

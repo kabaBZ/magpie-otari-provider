@@ -187,12 +187,15 @@ Only Chat models are exposed. The mapping includes:
 
 Model IDs with nested slashes are preserved.
 
-Models whose `pricing_source` is `organization` are served by a provider key
-your organization added under **Organization → Providers**. The plugin labels
-them in this order:
+Models served by a provider key your organization added under
+**Organization → Providers** are labelled. The plugin reads
+`GET /organizations/me/provider-keys`, then asks
+`GET /models?provider=<key>` for each key: Otari only marks those rows as
+`organization` in that listing, while the plain `/models` list reports every
+model as `configured`. The label is chosen in this order:
 
-1. the provider key's name (for example `[mydeepseek]`), when the Dashboard
-   session can read it and it is unambiguous for that provider;
+1. the name of the provider key that serves that model (for example
+   `[mydeepseek]`);
 2. the organization's name (for example `[kaba's organization]`);
 3. `organization Inference providers: <provider>` (for example
    `[organization Inference providers: deepseek]`);

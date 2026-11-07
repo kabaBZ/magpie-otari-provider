@@ -410,6 +410,8 @@ function mapModel(
 }
 
 function ownedLabelFor(model, context) {
+  const direct = context?.byModel?.get(model.id);
+  if (typeof direct === "string" && direct) return direct;
   const provider =
     typeof model.owned_by === "string" ? model.owned_by.trim() : "";
   const names = provider ? context?.byProvider?.get(provider) : null;
@@ -418,6 +420,21 @@ function ownedLabelFor(model, context) {
   return provider
     ? `organization Inference providers: ${provider}`
     : "organization Inference providers";
+}
+
+// forEachLimit runs up to `limit` calls at once. An organization may have a
+// handful of provider keys, and asking for each one's models is one request.
+async function forEachLimit(items, limit, run) {
+  const queue = [...items];
+  const workers = Array.from(
+    { length: Math.min(limit, queue.length) },
+    async () => {
+      while (queue.length) {
+        await run(queue.shift());
+      }
+    },
+  );
+  await Promise.all(workers);
 }
 
 function bootstrapModels() {
@@ -454,6 +471,33 @@ async function fetchModels({ auth, signal, fetchImpl = fetch }) {
   const payload = await readJSON(response, "模型列表");
   if (!Array.isArray(payload?.data)) {
     throw new OtariHttpError("Otari 模型列表格式无效", { status: response.status });
+  }
+  return payload.data.filter(isChatModel);
+}
+
+// Otari only marks a model `pricing_source: "organization"` when the listing
+// is asked for one organization provider key by name. The plain /models list
+// reports every model as "configured", so organization-owned models have to be
+// discovered key by key.
+async function fetchModelsForProvider({
+  auth,
+  provider,
+  signal,
+  fetchImpl = fetch,
+}) {
+  const baseURL = baseURLFromAuth(auth);
+  const response = await fetchImpl(apiURL(baseURL, "/models", { provider }), {
+    method: "GET",
+    headers: authHeaders(auth.key),
+    signal,
+  });
+  const payload = await readJSON(response, `模型列表（${provider}）`, {
+    expireOn401: false,
+  });
+  if (!Array.isArray(payload?.data)) {
+    throw new OtariHttpError("Otari 模型列表格式无效", {
+      status: response.status,
+    });
   }
   return payload.data.filter(isChatModel);
 }
@@ -520,31 +564,81 @@ async function listProviderModels(
     }
   }
 
+  // Keep the catalog list keyed by id so an organization listing can overlay
+  // its own pricing and capabilities without dropping what the catalog knows.
+  const modelById = new Map(models.map((model) => [model.id, model]));
   let ownedContext = null;
-  if (
-    models.some((model) => model.pricing_source === "organization") &&
-    dashboardSessionFromAuth(auth)
-  ) {
+
+  if (dashboardSessionFromAuth(auth)) {
     try {
       const [profile, providerKeys] = await Promise.all([
         fetchSessionOrganizationProfile({ auth, signal, fetchImpl }),
         fetchSessionProviderKeys({ auth, signal, fetchImpl }),
       ]);
       const byProvider = new Map();
+      const byModel = new Map();
+      const keys = [];
       for (const key of providerKeys) {
-        if (typeof key?.provider !== "string" || typeof key?.name !== "string") {
-          continue;
-        }
-        const names = byProvider.get(key.provider) ?? [];
-        names.push(key.name);
-        byProvider.set(key.provider, names);
+        const slug =
+          typeof key?.slug === "string" && key.slug.trim()
+            ? key.slug.trim()
+            : typeof key?.name === "string" && key.name.trim()
+              ? key.name.trim()
+              : "";
+        const label =
+          typeof key?.name === "string" && key.name.trim()
+            ? key.name.trim()
+            : slug;
+        if (!slug || !label) continue;
+        if (key?.archived_at) continue;
+        if (key?.usable === false) continue;
+        if (finiteNumber(key?.serving_count) === 0) continue;
+        keys.push({ slug, label, type: key.provider });
       }
+
+      // One request per key: Otari answers `pricing_source: "organization"`
+      // only for the key named in the query.
+      await forEachLimit(keys, 4, async (key) => {
+        let owned;
+        try {
+          owned = await fetchModelsForProvider({
+            auth,
+            provider: key.slug,
+            signal,
+            fetchImpl,
+          });
+        } catch {
+          return;
+        }
+        for (const model of owned) {
+          const id = typeof model?.id === "string" ? model.id : "";
+          if (!id) continue;
+          byModel.set(id, key.label);
+          const providerType =
+            typeof model.owned_by === "string" && model.owned_by.trim()
+              ? model.owned_by.trim()
+              : key.type;
+          if (typeof providerType === "string" && providerType) {
+            const names = byProvider.get(providerType) ?? [];
+            if (!names.includes(key.label)) names.push(key.label);
+            byProvider.set(providerType, names);
+          }
+          const existing = modelById.get(id);
+          modelById.set(id, {
+            ...(existing ?? {}),
+            ...model,
+            pricing_source: "organization",
+          });
+        }
+      });
+
       ownedContext = {
         organizationName:
           typeof profile?.organization?.name === "string"
             ? profile.organization.name
             : null,
         byProvider,
+        byModel,
       };
     } catch {
       // The Dashboard session is optional. If it expired or the organization
@@ -554,7 +648,7 @@ async function listProviderModels(
   }
 
   const listed = {};
-  for (const model of models) {
+  for (const model of modelById.values()) {
     const mapped = mapModel(model, {
       baseURL,
       pricing: model.pricing ?? prices[model.id] ?? null,
@@ -1828,6 +1922,7 @@ export const _internal = {
   isFreePricing,
   isChatModel,
   fetchModels,
+  fetchModelsForProvider,
   fetchCurrentPricing,
   listProviderModels,
   makeAuthorizedFetch,
