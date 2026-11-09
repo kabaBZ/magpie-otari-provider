@@ -363,6 +363,17 @@ npm run smoke
 
 如果 session 或密码已经泄露，请在 Otari Dashboard 退出登录、重新登录，并把新 session 填回插件。
 
+## 给 Otari 的反馈
+
+两层路由的实践挖出了两条上游问题：
+
+- [#3017](https://github.com/mozilla-ai/otari/issues/3017) —— `GET /models`
+  返回的 policy 没有 `kind`/`select`/`on_failure` 元数据，客户端分不清它是
+  策略还是真实模型。
+- [#3018](https://github.com/mozilla-ai/otari/issues/3018) —— `GET /models`
+  返回的某个模型 id 可能根本打不通（`502`），但同一个模型换成
+  `provider:model` selector 就能用。
+
 ## 开发
 
 ```text

@@ -370,6 +370,17 @@ The `otari` provider ID may already be occupied. Remove the old provider or conf
 
 If a session or password has been exposed, sign out of the Otari Dashboard, sign in again, and replace the stored session with the new value.
 
+## Otari feedback
+
+The two-layer routing work surfaced two upstream issues:
+
+- [#3017](https://github.com/mozilla-ai/otari/issues/3017) — policy entries in
+  `GET /models` carry no `kind`/`select`/`on_failure` metadata, so a client
+  cannot tell a policy from a real model.
+- [#3018](https://github.com/mozilla-ai/otari/issues/3018) — a model id
+  returned by `GET /models` can be uncallable (`502`) while the same model
+  works through its `provider:model` selector.
+
 ## Development
 
 ```text
