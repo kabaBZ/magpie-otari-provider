@@ -1,7 +1,7 @@
 {
   "name": "magpie-otari-provider",
-  "version": "0.2.1",
-  "description": "Otari provider plugin for Magpie with models, pricing, usage, budget balance and chat.",
+  "version": "0.3.0",
+  "description": "Otari provider plugin for Magpie with models, pricing, routing-policy tiers, request tags, usage, budget balance and chat.",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -11,6 +11,8 @@
   "files": [
     "index.mjs",
     "scripts/smoke.mjs",
+    "scripts/setup-two-layer.mjs",
+    "docs/two-layer-routing.md",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
@@ -33,9 +35,10 @@
   },
   "license": "MIT",
   "scripts": {
-    "check": "node --check index.mjs && node --check scripts/smoke.mjs",
+    "check": "node --check index.mjs && node --check scripts/smoke.mjs && node --check scripts/setup-two-layer.mjs",
     "test": "node --test",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "setup:routing": "node scripts/setup-two-layer.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -613,7 +613,13 @@ async function listProviderModels(
         for (const model of owned) {
           const id = typeof model?.id === "string" ? model.id : "";
           if (!id) continue;
-          byModel.set(id, key.label);
+          // A provider key lists its own native ids (`deepseek/deepseek-flash`),
+          // which Otari does not accept as a model selector. The callable form
+          // is `<key prefix>:<native model>`, e.g. `mydeepseek:deepseek-flash`.
+          const native = id.includes(":")
+            ? id
+            : id.slice(id.lastIndexOf("/") + 1);
+          const callableId = `${key.slug}:${native}`;
           const providerType =
             typeof model.owned_by === "string" && model.owned_by.trim()
               ? model.owned_by.trim()
@@ -623,10 +629,21 @@ async function listProviderModels(
             if (!names.includes(key.label)) names.push(key.label);
             byProvider.set(providerType, names);
           }
-          const existing = modelById.get(id);
-          modelById.set(id, {
-            ...(existing ?? {}),
+
+          // The catalog id the provider listing names may not be callable on
+          // its own. Move the entry to the key's callable selector, keeping
+          // whatever pricing and limits the catalog already knew.
+          const catalogEntry = modelById.get(id);
+          if (catalogEntry) modelById.delete(id);
+          byModel.set(callableId, key.label);
+          modelById.set(callableId, {
+            ...(catalogEntry ?? {}),
             ...model,
+            id: callableId,
+            name:
+              typeof model.name === "string" && model.name.trim()
+                ? model.name.trim()
+                : native,
             pricing_source: "organization",
           });
         }
@@ -659,6 +676,88 @@ async function listProviderModels(
           : undefined,
     });
     listed[mapped.id] = mapped;
+  }
+
+  // Otari routing policies are callable model names: `model: "fast"` resolves
+  // the policy. Expose each one as `policy/<name>` so Magpie can put it in an
+  // intent-routing group while the real model id stays untouched.
+  const policies = await listRoutingPolicyModels({
+    auth,
+    signal,
+    fetchImpl,
+    providerID,
+    baseURL,
+  });
+  Object.assign(listed, policies);
+
+  return listed;
+}
+
+async function listRoutingPolicyModels({
+  auth,
+  signal,
+  fetchImpl = fetch,
+  providerID = PROVIDER,
+  baseURL = DEFAULT_BASE_URL,
+}) {
+  if (!dashboardSessionFromAuth(auth)) return {};
+
+  const workspaceId = await keyWorkspaceFromAuth({
+    auth,
+    signal,
+    fetchImpl,
+  });
+
+  let policies;
+  try {
+    policies = await fetchSessionRoutingPolicies({
+      auth,
+      workspaceId,
+      signal,
+      fetchImpl,
+    });
+  } catch {
+    return {};
+  }
+
+  const listed = {};
+  for (const policy of policies) {
+    const name =
+      typeof policy?.name === "string" ? policy.name.trim() : "";
+    if (!name) continue;
+    if (
+      workspaceId &&
+      typeof policy?.workspace_id === "string" &&
+      policy.workspace_id &&
+      policy.workspace_id !== workspaceId
+    ) {
+      continue;
+    }
+
+    // Otari accepts the bare policy name as `model`, and Magpie sends the
+    // model's id (not `api.id`) for plugin providers, so the id must be the
+    // policy name itself.
+    listed[name] = {
+      id: name,
+      providerID,
+      name: `Otari 策略 · ${name}`,
+      api: {
+        id: name,
+        url: normalizeBaseURL(baseURL),
+        npm: NPM_PACKAGE,
+      },
+      limit: { context: 0, output: 0 },
+      capabilities: {
+        temperature: true,
+        reasoning: false,
+        attachment: false,
+        toolcall: true,
+        input: { text: true },
+        output: { text: true },
+      },
+      variants: {},
+      otariPolicy: true,
+    };
   }
   return listed;
 }
@@ -781,6 +880,28 @@ async function fetchSessionProviderKeys({
     label: "组织 Provider Key 列表",
   });
   return listFromPayload(payload);
+}
+
+// The API key names exactly one workspace. Routing policies are scoped to a
+// workspace, so the plugin has to know which one before it can expose them.
+async function keyWorkspaceFromAuth({ auth, signal, fetchImpl = fetch }) {
+  try {
+    const keys = await fetchSessionOrganizationKeys({
+      auth,
+      signal,
+      fetchImpl,
+    });
+    const key = keys.find(
+      (item) =>
+        typeof item?.key_prefix === "string" &&
+        typeof item?.key_suffix === "string" &&
+        auth.key.startsWith(item.key_prefix) &&
+        auth.key.endsWith(item.key_suffix),
+    );
+    return typeof key?.workspace_id === "string" ? key.workspace_id : null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchSessionBudgets({ auth, signal, fetchImpl = fetch }) {
@@ -1896,6 +2017,29 @@ export const OtariPlugin = async ({ client, directory } = {}, options = {}) => {
       }
     },
   },
+
+  // Otari records these on the usage row and lets the dashboard filter by
+  // them, so a Magpie conversation can be told apart from every other caller
+  // sharing the same API key. The header is strict: comma-separated key=value
+  // pairs, at most 16, with non-ASCII percent-encoded. A malformed value is a
+  // 422 on the whole request, so every value is encoded and the whole hook is
+  // best-effort.
+  "chat.headers": async (input, output) => {
+    try {
+      if (!output?.headers) return;
+      if (input?.model?.providerID !== providerID) return;
+
+      const tag = (value) =>
+        encodeURIComponent(String(value ?? "")).slice(0, 512);
+      const tags = ["app=magpie"];
+      if (input?.sessionID) tags.push(`session=${tag(input.sessionID)}`);
+      if (input?.model?.id) tags.push(`model=${tag(input.model.id)}`);
+
+      output.headers["Otari-Tags"] = tags.join(",");
+    } catch {
+      // A tag must never break a request.
+    }
+  },
   };
 };
 
@@ -1925,6 +2069,7 @@ export const _internal = {
   fetchModelsForProvider,
   fetchCurrentPricing,
   listProviderModels,
+  listRoutingPolicyModels,
   makeAuthorizedFetch,
   makeFallbackList,
   fetchWallet,
@@ -1933,6 +2078,7 @@ export const _internal = {
   fetchSessionOrganizationKeys,
   fetchSessionOrganizationProfile,
   fetchSessionProviderKeys,
+  keyWorkspaceFromAuth,
   fetchSessionBudgets,
   fetchSessionSpendCeilings,
   fetchSessionWallet,

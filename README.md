@@ -40,6 +40,8 @@ otari/deepseek/deepseek-v4.1-flash
 
 - Dynamic Chat model discovery from `GET /models`.
 - Models served by your organization's own provider keys are labelled with the provider key's name, the organization's name, or `organization Inference providers: <provider>` — in that order.
+- Otari routing policies are exposed as Magpie models by their policy name (for example `otari/fast`).
+- Every request carries `Otari-Tags` (`app=magpie,session=…,model=…`) for per-conversation usage filtering.
 - Per-million-token price mapping from Otari into Magpie's model cost fields.
 - `GET /pricing/current` fallback when a model listing omits pricing.
 - Dashboard balance, key budget, reset time, usage and routing visibility.
@@ -255,6 +257,26 @@ API-key-only accounts return `signIn: "kept"` with a clear “sign in again” h
 Otari currently exposes reasoning as a boolean capability through `supported_parameters`. It does not expose allowed effort levels such as `low`, `medium` or `high`.
 
 The plugin maps the boolean to Magpie's `capabilities.reasoning`. It does not invent reasoning variants.
+
+### Routing policies as models
+
+Otari routing policies are caller-facing model names. The plugin reads
+`GET /organizations/me/routing-policies` through the Dashboard session and
+exposes each one by its policy name, so `otari/fast` resolves the Otari
+policy `fast`.
+
+The plugin also tags every request:
+
+```text
+Otari-Tags: app=magpie,session=<Magpie session id>,model=<model id>
+```
+
+Otari records those tags on the usage row, so the dashboard can filter spend by
+conversation. Values are percent-encoded and the hook is best-effort: a tagging
+failure never breaks the request.
+
+See [Two-layer routing](docs/two-layer-routing.md) for the full setup, the
+`fast` / `strong` / `long` policy recipes, and the Magpie group commands.
 
 ## Configuration
 

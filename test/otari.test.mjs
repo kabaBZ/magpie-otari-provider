@@ -199,8 +199,12 @@ test("labels an organization model with its provider key name", async () => {
     },
   );
   assert.equal(
-    models["deepseek/deepseek-v4.1-flash"].name,
+    models["mydeepseek:deepseek-v4.1-flash"].name,
     "[mydeepseek] DeepSeek V4.1 Flash",
+  );
+  assert.equal(
+    models["mydeepseek:deepseek-v4.1-flash"].api.id,
+    "mydeepseek:deepseek-v4.1-flash",
   );
   assert.ok(
     calls.some((value) => value.includes("/models?provider=mydeepseek")),
@@ -234,6 +238,80 @@ test("keeps model discovery when the Dashboard session has expired", async () =>
     models["deepseek/deepseek-v4.1-flash"].name,
     "DeepSeek V4.1 Flash",
   );
+});
+
+test("exposes routing policies as Magpie models", async () => {
+  const fetchImpl = async (url) => {
+    const value = String(url);
+    if (value.includes("/organizations/me/keys")) {
+      return jsonResponse([
+        { key_prefix: "otk_", key_suffix: "test", workspace_id: "ws-1" },
+      ]);
+    }
+    if (value.includes("/organizations/me/provider-keys")) {
+      return jsonResponse({ data: [] });
+    }
+    if (value.endsWith("/organizations/me")) {
+      return jsonResponse({ organization: { name: "kaba's organization" } });
+    }
+    if (value.includes("/organizations/me/routing-policies")) {
+      return jsonResponse([
+        { name: "fast", workspace_id: "ws-1", spec: {} },
+        { name: "other", workspace_id: "ws-2", spec: {} },
+      ]);
+    }
+    if (value.endsWith("/models")) {
+      return jsonResponse({ data: [modelFixture()] });
+    }
+    throw new Error(`unexpected URL: ${value}`);
+  };
+
+  const models = await _internal.listProviderModels(
+    { models: _internal.bootstrapModels() },
+    {
+      auth: {
+        type: "api",
+        key: "otk_test",
+        metadata: { dashboardSession: "session-value" },
+      },
+      fetchImpl,
+    },
+  );
+
+  assert.equal(models["fast"].id, "fast");
+  assert.equal(models["fast"].api.id, "fast");
+  assert.equal(models["fast"].otariPolicy, true);
+  assert.equal(models["fast"].name, "Otari 策略 · fast");
+  assert.equal(models["other"], undefined);
+  assert.equal(
+    models["deepseek/deepseek-v4.1-flash"].id,
+    "deepseek/deepseek-v4.1-flash",
+  );
+});
+
+test("tags Otari requests with the Magpie session and model", async () => {
+  const hooks = await OtariPlugin({
+    client: { app: { log: async () => {} } },
+  });
+  const output = { headers: {} };
+  await hooks["chat.headers"](
+    {
+      sessionID: "sess,1=2",
+      model: { providerID: "otari", id: "policy/fast" },
+    },
+    output,
+  );
+  assert.equal(
+    output.headers["Otari-Tags"],
+    "app=magpie,session=sess%2C1%3D2,model=policy%2Ffast",
+  );
+
+  const other = { headers: {} };
+  await hooks["chat.headers"](
+    { sessionID: "s", model: { providerID: "other", id: "x" } },
+    other,
+  );
+  assert.equal(other.headers["Otari-Tags"], undefined);
 });
 
 test("falls back to the organization name when two keys serve one provider", async () => {
@@ -348,8 +426,9 @@ test("adds a model only the organization provider key lists", async () => {
       fetchImpl,
     },
   );
-  assert.equal(models["deepseek/only-org"].name, "[mydeepseek] Only Org");
-  assert.equal(models["deepseek/only-org"].organizationOwned, true);
+  assert.equal(models["mydeepseek:only-org"].name, "[mydeepseek] Only Org");
+  assert.equal(models["mydeepseek:only-org"].organizationOwned, true);
+  assert.equal(models["mydeepseek:only-org"].api.id, "mydeepseek:only-org");
 });
 
 test("does not invent pricing and marks zero-priced models free", () => {
